@@ -4,7 +4,7 @@ LangGraph 기반 멀티 에이전트로 **경매장 시세 조회 · 캐릭터 �
 라우터가 질문 의도를 분류해 4개의 전문 에이전트 중 하나로 보내고, 각 에이전트는 Tool Calling으로 Stove 공식 개발자 API나 벡터 DB를 조회해 답변합니다.
 
 - 📄 설계 문서: [Loa Agent Documentation](https://checkered-harmony-550.notion.site/Loa-Agent-Documentation-41589a1f6399802aa32edcfb2cde3efb?source=copy_link)
-- 🎬 데모 영상: [링크](데모_영상_링크)
+- 🎬 데모 영상: [링크](https://drive.google.com/file/d/1omvh1UlLLzKgC0GTsXpyI37yDlNoio6c/view)
 
 ## 주요 기능
 
