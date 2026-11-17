@@ -1,0 +1,20 @@
+# 비밀 정보
+.env
+
+# 가상환경 / 캐시
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# LangGraph dev 서버 로컬 데이터
+.langgraph_api/
+
+# 벡터 DB와 동기화 상태 (각자 utils/DBupdate.py로 생성)
+data/chroma_db/
+chroma_db_rag/
+data/sync_state.json
+data/vector_visualization.html
+
+# 에디터
+.vscode/

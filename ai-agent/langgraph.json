@@ -1,0 +1,14 @@
+{
+    "dependencies": ["."],
+    "graphs": {
+        "agent": "./agent/agent.py:app"
+    },
+    "ignore": [
+        ".venv",
+        "__pycache__",
+        "*.sqlite",
+        "*.db",
+        ".env",
+        "agent/__pycache__"
+    ]
+}

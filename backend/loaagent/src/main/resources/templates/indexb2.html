@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoaAgent - 로스트아크 AI 어시스턴트</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between">
+
+<!-- 상단 내비게이션 바 -->
+<div th:replace="~{frahments.html::navbar}"></div>
+
+<!-- 메인 콘텐츠 영역 -->
+<main class="max-w-7xl mx-auto px-6 py-16 flex-grow flex flex-col justify-center">
+    <!-- 히어로 섹션 -->
+    <div class="text-center max-w-3xl mx-auto mb-16">
+        <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight mb-6">
+            스마트한 로스트아크 파트너,<br>
+            <span class="text-blue-400">LoaAgent</span>와 함께하세요
+        </h1>
+        <p class="text-slate-400 text-lg mb-8">
+            LangGraph 기반의 AI 에이전트와 실시간 마켓 시세 조회 기능으로 로스트아크 경제와 정보를 한눈에 파악하세요.
+        </p>
+        <div class="flex justify-center gap-4">
+            <a href="/chat" class="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 font-semibold transition shadow-lg shadow-blue-500/20">
+                AI 에이전트 대화하기
+            </a>
+            <a href="/market" class="px-6 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold transition border border-slate-700">
+                마켓 시세 검색
+            </a>
+        </div>
+    </div>
+
+    <!-- 기능 소개 카드 그리드 -->
+    <div class="grid md:grid-cols-3 gap-6">
+        <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition">
+            <div class="w-10 h-10 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center font-bold mb-4">AI</div>
+            <h3 class="text-lg font-bold mb-2">LangGraph 에이전트</h3>
+            <p class="text-slate-400 text-sm">복잡한 로스트아크 관련 질문과 도구 호출을 유연하게 처리하는 지능형 챗봇 서비스입니다.</p>
+        </div>
+        <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition">
+            <div class="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold mb-4">M</div>
+            <h3 class="text-lg font-bold mb-2">실시간 마켓 분석</h3>
+            <p class="text-slate-400 text-sm">카테고리별 아이템 시세와 경매장 정보를 빠르게 탐색하고 최적의 거래 정보를 제공합니다.</p>
+        </div>
+        <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition">
+            <div class="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold mb-4">SEC</div>
+            <h3 class="text-lg font-bold mb-2">안전한 회원 관리</h3>
+            <p class="text-slate-400 text-sm">Spring Security와 연동되어 개인 설정과 대화 기록을 안전하게 보호합니다.</p>
+        </div>
+    </div>
+</main>
+
+<!-- 푸터 -->
+<div th:replace="~{frahments.html::footer}"></div>
+
+</body>
+</html>

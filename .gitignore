@@ -1,0 +1,5 @@
+﻿certificate/
+ai-agent/agent/agentBackup.py
+ai-agent/mainBackup.py
+ai-agent/build_vector_db.py
+ai-agent/test.py

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 에이전트 대화 - LoaAgent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- marked.js CDN 추가 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 h-screen flex flex-col">
+
+<!-- 상단 내비게이션 -->
+<div th:replace="~{frahments.html::navbar}"></div>
+
+<!-- 채팅 메인 영역 -->
+<main class="max-w-4xl mx-auto w-full flex-grow flex flex-col p-4 overflow-hidden">
+    <!-- 대화 출력 박스 -->
+    <div id="chat-container" class="flex-grow overflow-y-auto space-y-4 pr-2 mb-4">
+        <!-- 봇 안내 메시지 -->
+        <div class="flex items-start space-x-3">
+            <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold text-sm shrink-0">AI</div>
+            <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 max-w-lg text-sm text-slate-200">
+                안녕하세요! 로스트아크 AI 에이전트 <strong>LoaAgent</strong>입니다. 마켓 시세 검색이나 캐릭터 정보 등 궁금한 점을 편하게 물어보세요!
+            </div>
+        </div>
+    </div>
+
+    <!-- 하단 메시지 입력 바 -->
+    <div class="shrink-0 pt-2">
+        <form id="chat-form" class="flex gap-2">
+            <input type="text" id="user-input" autocomplete="off" placeholder="메시지를 입력하세요..." class="flex-grow px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 focus:outline-none focus:border-blue-500 transition">
+            <button type="submit" class="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 font-semibold transition shadow-lg shadow-blue-500/20">
+                전송
+            </button>
+        </form>
+    </div>
+</main>
+
+<script>
+    const chatContainer = document.getElementById('chat-container');
+    const chatForm = document.getElementById('chat-form');
+    const userInput = document.getElementById('user-input');
+    let thread_id = 'user_' + Math.random().toString(36).substring(2, 11) + Date.now();
+    chatForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const text = userInput.value.trim();
+        if (!text) return;
+
+        // 1. 유저 메시지 화면에 즉시 추가 (유저는 escapeHtml 유지)
+        const userMsgDiv = document.createElement('div');
+        userMsgDiv.className = 'flex items-start justify-end space-x-3';
+        userMsgDiv.innerHTML = `<div class="bg-blue-600 text-white rounded-2xl p-4 max-w-lg text-sm">${escapeHtml(text)}</div>`;
+        chatContainer.appendChild(userMsgDiv);
+
+        userInput.value = '';
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+
+        // 2. AI 응답 로딩 메시지 생성
+        const loadingId = 'loading-' + Date.now();
+        const botLoadingDiv = document.createElement('div');
+        botLoadingDiv.id = loadingId;
+        botLoadingDiv.className = 'flex items-start space-x-3';
+        botLoadingDiv.innerHTML = `
+            <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold text-sm shrink-0">AI</div>
+            <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 max-w-lg text-sm text-slate-400 animate-pulse">
+                답변을 생성하고 있습니다...
+            </div>`;
+        chatContainer.appendChild(botLoadingDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+
+        try {
+            // 3. 스프링 부트 백엔드 API로 Fetch 요청 전송
+            const response = await fetch('/chat/ask', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ thread_id: thread_id,
+                    message: text })
+            });
+
+            if (!response.ok) {
+                throw new Error('서버 응답이 올바르지 않습니다.');
+            }
+
+            const data = await response.json(); // { reply: "AI 답변 내용" }
+
+            // 4. 로딩 메시지를 실제 AI 답변으로 교체 (marked.js 적용 및 prose 클래스 추가)
+            const loadingElement = document.getElementById(loadingId);
+            if (loadingElement) {
+                loadingElement.innerHTML = `
+                    <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold text-sm shrink-0">AI</div>
+                    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 max-w-xl text-sm text-slate-200 prose prose-invert">
+                        ${marked.parse(data.reply)}
+                    </div>`;
+            }
+        } catch (error) {
+            console.error('통신 에러:', error);
+            const loadingElement = document.getElementById(loadingId);
+            if (loadingElement) {
+                loadingElement.innerHTML = `
+                    <div class="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center font-bold text-sm shrink-0">AI</div>
+                    <div class="bg-slate-800 border border-red-700 rounded-2xl p-4 max-w-lg text-sm text-red-300">
+                        오류가 발생했습니다. 잠시 후 다시 시도해주세요.
+                    </div>`;
+            }
+        } finally {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+    });
+
+    // 간단한 XSS 방지용 HTML Escaping 함수 (유저 입력용)
+    function escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+</script>
+
+<!-- footer -->
+<div th:replace="~{frahments.html::footer}"></div>
+
+</body>
+</html>
