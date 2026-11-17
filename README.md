@@ -3,7 +3,7 @@
 LangGraph 기반 멀티 에이전트로 **경매장 시세 조회 · 캐릭터 정보 조회 · 레이드 공략 RAG 검색**을 하나의 대화창에서 처리하는 개인 프로젝트입니다.
 라우터가 질문 의도를 분류해 4개의 전문 에이전트 중 하나로 보내고, 각 에이전트는 Tool Calling으로 Stove 공식 개발자 API나 벡터 DB를 조회해 답변합니다.
 
-- 📄 설계 문서: [Loa Agent Documentation](노션_공개_링크)
+- 📄 설계 문서: [Loa Agent Documentation](https://checkered-harmony-550.notion.site/Loa-Agent-Documentation-41589a1f6399802aa32edcfb2cde3efb?source=copy_link)
 - 🎬 데모 영상: [링크](데모_영상_링크)
 
 ## 주요 기능
