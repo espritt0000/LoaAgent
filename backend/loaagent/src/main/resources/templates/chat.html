@@ -83,7 +83,11 @@
             });
 
             if (!response.ok) {
-                throw new Error('서버 응답이 올바르지 않습니다.');
+                // 서버가 보내 준 안내 문구(타임아웃, 연결 실패 등)가 있으면 그대로 보여 준다
+                const errorData = await response.json().catch(() => null);
+                const serverError = new Error('서버 응답 상태 코드: ' + response.status);
+                serverError.userMessage = errorData?.reply;
+                throw serverError;
             }
 
             const data = await response.json(); // { reply: "AI 답변 내용" }
@@ -103,9 +107,10 @@
             if (loadingElement) {
                 loadingElement.innerHTML = `
                     <div class="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center font-bold text-sm shrink-0">AI</div>
-                    <div class="bg-slate-800 border border-red-700 rounded-2xl p-4 max-w-lg text-sm text-red-300">
-                        오류가 발생했습니다. 잠시 후 다시 시도해주세요.
-                    </div>`;
+                    <div class="bg-slate-800 border border-red-700 rounded-2xl p-4 max-w-lg text-sm text-red-300"></div>`;
+                // 서버 문구가 없으면(네트워크 오류 등) 기본 문구 사용, textContent로 넣어 HTML 해석을 막는다
+                loadingElement.lastElementChild.textContent =
+                    error.userMessage || '오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
             }
         } finally {
             chatContainer.scrollTop = chatContainer.scrollHeight;
