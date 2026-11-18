@@ -11,6 +11,7 @@ public class MemberService {
     private final PasswordEncoder passwordEncoder;
 
     public Long join(MemberFormDto memberFormDto){
+        validateDuplicateMember(memberFormDto.username());
         Member member = Member.builder()
                 .username(memberFormDto.username())
                 .password(passwordEncoder.encode(memberFormDto.password()))

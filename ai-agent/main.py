@@ -13,7 +13,7 @@ class ChatResponse(BaseModel):
     reply: str
 
 @fastapi_app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(chatRequest: ChatRequest):
+def chat_endpoint(chatRequest: ChatRequest):
     print(f"SpringBoot Request : {chatRequest.message}")
 
     try:

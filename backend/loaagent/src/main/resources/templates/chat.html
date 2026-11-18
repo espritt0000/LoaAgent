@@ -7,11 +7,13 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- marked.js CDN 추가 -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- AI 답변 HTML 정화(XSS 방지) -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col">
 
 <!-- 상단 내비게이션 -->
-<div th:replace="~{frahments.html::navbar}"></div>
+<div th:replace="~{fragments.html::navbar}"></div>
 
 <!-- 채팅 메인 영역 -->
 <main class="max-w-4xl mx-auto w-full flex-grow flex flex-col p-4 overflow-hidden">
@@ -92,7 +94,7 @@
                 loadingElement.innerHTML = `
                     <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold text-sm shrink-0">AI</div>
                     <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 max-w-xl text-sm text-slate-200 prose prose-invert">
-                        ${marked.parse(data.reply)}
+                        ${DOMPurify.sanitize(marked.parse(data.reply))}
                     </div>`;
             }
         } catch (error) {
@@ -124,7 +126,7 @@
 </script>
 
 <!-- footer -->
-<div th:replace="~{frahments.html::footer}"></div>
+<div th:replace="~{fragments.html::footer}"></div>
 
 </body>
 </html>

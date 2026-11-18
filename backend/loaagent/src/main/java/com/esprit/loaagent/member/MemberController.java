@@ -31,7 +31,7 @@ public class MemberController {
         try {
             memberService.join(memberFormDto);
         } catch (IllegalStateException e){
-            return "redirect:/signup?error=" + e.getMessage();
+            return "redirect:/signup?error=duplicate";
         }
         return "redirect:/";
     }

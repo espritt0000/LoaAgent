@@ -1,11 +1,8 @@
-import os
-from pathlib import Path
 from typing import Literal
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import SystemMessage, trim_messages
-from langchain_core.chat_history import InMemoryChatMessageHistory
 from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
@@ -18,7 +15,6 @@ from tools.guide import search_game_guide
 
 load_dotenv()
 
-# temperature=0을 설정하여 도구 호출 시 무작위성을 줄이고 정확한 결정을 내리도록 유도
 class AgentState(MessagesState):
     """
     LangGraph 전역 상태 객체
@@ -45,7 +41,7 @@ class RouterOutput(BaseModel):
     destination: Literal["character_agent", "market_agent", "guide_agent", "general_agent"] = Field(
         description=
             "질문 유형에 따른 전송 경로: "
-            "1. character_agent: 특정 캐릭터의 정보, 장비, 스펙, 원정대 조회 관련 "
+            "1. character_agent: 특정 캐릭터의 기본 프로필(서버, 직업, 전투 레벨, 아이템 레벨, 전투력, 길드) 조회 관련 "
             "2. market_agent: 경매장, 시세, 가격, 아이템 구매/판매, 재료 시세 조회 관련 "
             "3. guide_agent: 레이드 공략, 군단장/어비스 던전 패턴, 보스 공략법, 게임 가이드, 게임 정보 및 육성법 지식 검색 관련 "
             "4. general_agent: 단순 인사, 일반적인 잡담 및 위 카테고리에 속하지 않는 질문"
@@ -56,7 +52,7 @@ router_system = SystemMessage(content=
     """너는 로스트아크 AI 비서의 라우터야. 사용자의 질문을 분석해 적절한 에이전트를 지정해.
     [분류 기준 및 예시]
     1. character_agent (캐릭터 스펙/정보 조회):
-        - 특정 닉네임이 언급되면서 아이템 레벨, 전투력, 직업, 스펙, 원정대 등을 물어볼 때)
+        - 특정 닉네임이 언급되면서 서버, 직업, 전투 레벨, 아이템 레벨, 전투력, 길드 등 기본 프로필을 물어볼 때
         - 단어에 "캐릭터"라는 말이 없어도, 사람 이름/닉네임과 게임 스펙 키워드가 함께 나오면 무조건 이쪽으로 보낼 것.
     2. market_agent (경매장/시세):
         - 특정 아이템의 가격, 시세, 경매장 검색, 재료 비용 문의
