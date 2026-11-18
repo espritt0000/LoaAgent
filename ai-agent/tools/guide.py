@@ -25,6 +25,15 @@ except Exception as e:
     vector_store = None
 
 
+def decide_k(query: str) -> int:
+    """[동적 검색 전략] 검색어의 성격에 따라 가져올 문서 개수(k)를 정한다 (rag_eval.py에서도 같은 규칙 사용)"""
+    if any(keyword in query for keyword in ["전체", "요약", "개요", "알려줘", "소개"]):
+        return 3  # 전체적인 내용이 필요할 때는 넓게 탐색
+    # 예전에는 "줄·카운터·저스트 가드" 같은 패턴 키워드에 k=1을 썼지만, 이 단어들은 여러 섹션에 공통으로 나와
+    # 정답 청크가 2~3위로 밀리는 경우가 많아(rag_eval.py 측정) k=1 규칙을 없앴다
+    return 2  # 기본값
+
+
 @tool
 def search_game_guide(query: str) -> list:
     """
@@ -44,11 +53,7 @@ def search_game_guide(query: str) -> list:
     
     try:
         # 💡 [동적 검색 전략] 질문의 성격에 따라 가져올 문서 개수(k)를 유동적으로 결정
-        k = 2  # 기본값
-        if any(keyword in query for keyword in ["전체", "요약", "개요", "알려줘", "소개"]):
-            k = 3  # 전체적인 내용이 필요할 때는 넓게 탐색
-        elif any(keyword in query for keyword in ["줄", "카운터", "무력화", "저스트 가드", "관문", "패턴"]):
-            k = 1  # 특정 패턴이나 좁은 기믹을 물어볼 때는 타이트하게 탐색
+        k = decide_k(query)
 
         print(f"🎯 [동적 k 적용] 설정된 k값: {k}")
 
