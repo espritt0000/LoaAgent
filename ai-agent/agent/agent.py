@@ -3,6 +3,7 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import SystemMessage, trim_messages
+from langchain_core.exceptions import ModelError
 from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
@@ -87,6 +88,11 @@ def router(state: AgentState):
                 raise ValueError("구조화 출력이 비어 있음 (result=None)")
             destination = result.destination
             break
+        except ModelError as e:
+            # LLM 호출 자체의 실패(429, 인증 오류, 서버 장애 등)는 SDK가 이미 재시도했고,
+            # general_agent도 같은 LLM을 쓰므로 재시도·폴백 없이 바로 올려서 main.py에서 안내한다
+            print(f"🚨 [Router LLM Error] LLM 호출 실패, 재시도·폴백 없이 중단 - {type(e).__name__}")
+            raise
         except Exception as e:
             print(f"⚠️ [Router Error] 분류 실패 ({attempt}/{ROUTER_MAX_ATTEMPTS}회차) - {type(e).__name__}: {e}")
 

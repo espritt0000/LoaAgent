@@ -1,6 +1,14 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
+from langchain_core.exceptions import (
+    ModelRateLimitError,
+    ModelAuthenticationError,
+    ModelPermissionDeniedError,
+    ModelAPIError,
+    ModelTimeoutError,
+    ModelConnectionError,
+)
 from agent.agent import app as agent_app
 
 fastapi_app = FastAPI()
@@ -48,8 +56,19 @@ def chat_endpoint(chatRequest: ChatRequest):
         else:
             ai_reply = "답변을 생성하지 못했습니다."
 
+    # LLM 오류는 LangChain 공통 예외(langchain_core.exceptions)로 구분한다 (모델을 바꿔도 그대로 사용 가능)
+    except ModelRateLimitError as e:
+        print(f"🚦 [LLM Rate Limit] 사용량 제한(429) - {type(e).__name__}")
+        ai_reply = "요청이 많아 잠시 이용이 제한됐습니다. 1~2분 후 다시 시도해주세요."
+    except (ModelAuthenticationError, ModelPermissionDeniedError) as e:
+        # 키 값이 로그에 남지 않도록 예외 이름만 출력한다
+        print(f"🔑 [LLM Auth Error] API 키 또는 권한 확인 필요 - {type(e).__name__}")
+        ai_reply = "AI 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요."
+    except (ModelAPIError, ModelTimeoutError, ModelConnectionError) as e:
+        print(f"🌩️ [LLM Server Error] LLM 서버 장애 또는 연결 문제 - {type(e).__name__}")
+        ai_reply = "AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요."
     except Exception as e:
-        print(f"에이전트 실행 중 오류 발생: {e}")
+        print(f"에이전트 실행 중 오류 발생: {type(e).__name__}: {e}")
         ai_reply = "AI 에이전트 처리 중 오류가 발생했습니다."
 
     return ChatResponse(reply=ai_reply)

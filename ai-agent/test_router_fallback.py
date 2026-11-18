@@ -9,6 +9,7 @@
 import unittest
 from unittest.mock import patch, MagicMock
 from langchain_core.messages import HumanMessage
+from langchain_google_genai.chat_models import GoogleRateLimitError
 
 import agent.agent as agent_module
 from agent.agent import router, RouterOutput
@@ -58,6 +59,15 @@ class RouterFallbackTest(unittest.TestCase):
         result, calls = self.run_router_with([None, None])
         self.assertEqual(result["next_node"], "general_agent")
         self.assertEqual(calls, 2)
+
+    def test_LLM_호출_오류면_재시도_폴백_없이_예외(self):
+        # 429처럼 LLM 호출 자체가 실패하면 general_agent로 보내지 않고 바로 올린다
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [GoogleRateLimitError("429 RESOURCE_EXHAUSTED")]
+        with patch.object(agent_module, "router_llm", mock_llm):
+            with self.assertRaises(GoogleRateLimitError):
+                router(make_state())
+        self.assertEqual(mock_llm.invoke.call_count, 1)
 
 
 if __name__ == "__main__":
