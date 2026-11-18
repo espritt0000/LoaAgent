@@ -48,6 +48,10 @@ class RouterOutput(BaseModel):
     )
 
 router_llm = llm.with_structured_output(RouterOutput)
+# 라우터 분류 시도 횟수 (첫 시도 + 재시도 1회)
+ROUTER_MAX_ATTEMPTS = 2
+# 분류에 끝내 실패했을 때 보낼 기본 경로
+ROUTER_FALLBACK = "general_agent"
 router_system = SystemMessage(content=
     """너는 로스트아크 AI 비서의 라우터야. 사용자의 질문을 분석해 적절한 에이전트를 지정해.
     [분류 기준 및 예시]
@@ -74,11 +78,27 @@ def router(state: AgentState):
     if messages:
         print(f"💬 [Latest Message] 마지막 입력: {messages[-1].content}")
     
-    result = router_llm.invoke([router_system] + messages)
-    print(f"🎯 [Router Decision] 선택된 다음 경로 ➡️ {result.destination}")
+    destination = None
+    for attempt in range(1, ROUTER_MAX_ATTEMPTS + 1):
+        try:
+            result = router_llm.invoke([router_system] + messages)
+            # 응답이 비었거나 스키마에 맞는 값을 못 받은 경우도 실패로 본다
+            if result is None:
+                raise ValueError("구조화 출력이 비어 있음 (result=None)")
+            destination = result.destination
+            break
+        except Exception as e:
+            print(f"⚠️ [Router Error] 분류 실패 ({attempt}/{ROUTER_MAX_ATTEMPTS}회차) - {type(e).__name__}: {e}")
+
+    # 재시도까지 실패하면 서비스를 멈추지 않고 일반 대화 에이전트로 보낸다
+    if destination is None:
+        destination = ROUTER_FALLBACK
+        print(f"🛟 [Router Fallback] 분류에 실패해 기본 경로로 보냅니다 ➡️ {destination}")
+
+    print(f"🎯 [Router Decision] 선택된 다음 경로 ➡️ {destination}")
     print("-" * 50)
     
-    return {"next_node": result.destination}
+    return {"next_node": destination}
 
 def route_decision(state: AgentState):
     """라우터가 선택한 다음 노드 이름을 리턴하는 조건부 엣지 함수"""
