@@ -50,7 +50,8 @@ LoaAgent/
 │  │  └─ utils.py             # Stove API 공통 헤더, 에러 핸들러
 │  ├─ data/raids/             # 레이드 공략 Markdown 문서
 │  ├─ router_eval.py          # 라우터 분기 정확도 테스트 (40문항)
-│  └─ test_router_fallback.py # 라우터 재시도·폴백 단위 테스트 (Mock, API 호출 없음)
+│  ├─ test_router_fallback.py # 라우터 재시도·폴백 단위 테스트 (Mock, API 호출 없음)
+│  └─ test_llm_error_messages.py # LLM 오류 종류별 안내 문구 테스트 (Mock, API 호출 없음)
 └─ backend/loaagent/          # Spring Boot (인증·세션·화면)
 ```
 
@@ -107,6 +108,24 @@ cd ai-agent
 python -m unittest test_router_fallback -v
 ```
 
+## LLM 오류 처리
+
+Gemini 오류는 LangChain 공통 예외(`langchain_core.exceptions`)로 구분해 다른 안내 문구를 보여 줍니다. 라우터는 LLM 호출 자체가 실패하면(429, 인증 오류, 서버 장애) 재시도·폴백 없이 바로 중단합니다. SDK가 이미 재시도했고, 폴백 대상인 General Agent도 같은 LLM을 쓰기 때문입니다.
+
+| 오류 | 예외 | 안내 문구 |
+| --- | --- | --- |
+| 사용량 제한(429) | `ModelRateLimitError` | 요청이 많아 잠시 이용이 제한됐습니다. 1~2분 후 다시 시도해주세요. |
+| 인증·권한(401/403) | `ModelAuthenticationError`, `ModelPermissionDeniedError` | AI 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요. |
+| 서버 장애(5xx) 등 | `ModelAPIError`, `ModelTimeoutError`, `ModelConnectionError` | AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요. |
+| 그 외 | – | AI 에이전트 처리 중 오류가 발생했습니다. |
+
+컨텍스트 초과는 모든 노드에서 `trim_messages`(12,000토큰)로 입력을 자르므로 별도로 구분하지 않습니다.
+
+```bash
+cd ai-agent
+python -m unittest test_llm_error_messages -v
+```
+
 ## FastAPI 호출 타임아웃 테스트
 
 가짜 FastAPI 서버(JDK 내장 `HttpServer`)로 정상 응답, 응답 지연, 서버 꺼짐, 500 응답을 만들어 상태 코드와 안내 문구를 확인합니다. Spring 컨텍스트를 띄우지 않아 MySQL 없이 실행됩니다.
@@ -119,7 +138,8 @@ cd backend/loaagent
 ## 한계와 개선 계획
 
 - 대화 맥락은 메모리(`MemorySaver`)에만 저장되어 서버를 재시작하면 초기화됨
-- 라우터 폴백은 분류 실패만 대응함 → Gemini API 장애나 429(사용량 제한)처럼 LLM 호출 자체가 실패하면 General Agent도 같은 LLM을 쓰므로 응답 실패. LLM 오류 종류별 처리는 미구현
+- LLM 오류 안내는 FastAPI가 HTTP 200의 답변 문구로 돌려주므로, 채팅 화면에서는 오류 말풍선이 아닌 일반 답변 말풍선으로 보임
+- 연결 끊김 같은 네트워크 오류가 `ModelConnectionError`로 변환되는지는 확인하지 못함(langchain-google-genai 4.4.2 소스에서는 HTTP 상태 코드 오류만 공통 예외로 변환). 변환되지 않으면 "그 외" 문구로 처리됨
 - Spring 쪽 타임아웃은 기다림만 끊음 → FastAPI는 요청을 끝까지 처리하고 그 답변이 대화 기록(`MemorySaver`)에 남아, 사용자가 보지 못한 답변이 다음 질문의 맥락에 섞일 수 있음
 - 응답 제한 시간 60초는 실측값이 아님. Gemini 클라이언트는 기본 `max_retries=6`, `timeout` 미설정(langchain-google-genai 4.4.2 기준)이라 API가 불안정하면 FastAPI 처리 시간이 60초를 넘을 수 있음
 - 벡터 검색만 사용 → 하이브리드 검색(BM25 + 벡터)과 리랭커 도입 검토

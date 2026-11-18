@@ -1,0 +1,59 @@
+"""
+LLM 오류 종류별 안내 문구 테스트 (main.py /chat)
+
+실행 위치: ai-agent 폴더
+실행 방법: python -m unittest test_llm_error_messages -v
+- 라우터 LLM이 오류를 내도록 Mock으로 바꾸고, 실제 LangGraph 그래프와 chat_endpoint를 거쳐
+  사용자에게 돌아가는 문구를 확인합니다. Gemini API는 호출하지 않습니다.
+"""
+import unittest
+from unittest.mock import patch, MagicMock
+from langchain_core.exceptions import ModelAPIError
+from langchain_google_genai.chat_models import GoogleRateLimitError, GoogleAuthenticationError
+
+import agent.agent as agent_module
+from main import chat_endpoint, ChatRequest
+
+
+class LLMErrorMessageTest(unittest.TestCase):
+    def setUp(self):
+        # trimmer가 토큰 계산 중 외부 호출을 하지 않도록 입력을 그대로 돌려주게 바꾼다
+        trimmer_patch = patch.object(agent_module, "trimmer")
+        mock_trimmer = trimmer_patch.start()
+        mock_trimmer.invoke.side_effect = lambda messages: messages
+        self.addCleanup(trimmer_patch.stop)
+
+    def ask_with_router_error(self, error, thread_id):
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = error
+        with patch.object(agent_module, "router_llm", mock_llm):
+            response = chat_endpoint(ChatRequest(message="세르카 1관문 기믹 알려줘", thread_id=thread_id))
+        return response.reply, mock_llm.invoke.call_count
+
+    def test_429면_사용량_제한_안내(self):
+        reply, calls = self.ask_with_router_error(GoogleRateLimitError("429 RESOURCE_EXHAUSTED"), "t-429")
+        self.assertEqual(reply, "요청이 많아 잠시 이용이 제한됐습니다. 1~2분 후 다시 시도해주세요.")
+        self.assertEqual(calls, 1)  # 라우터가 재시도하지 않음
+
+    def test_인증_오류면_설정_문제_안내(self):
+        reply, _ = self.ask_with_router_error(GoogleAuthenticationError("401 UNAUTHENTICATED"), "t-401")
+        self.assertEqual(reply, "AI 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요.")
+
+    def test_서버_오류면_일시적_불안정_안내(self):
+        reply, _ = self.ask_with_router_error(ModelAPIError("503 UNAVAILABLE"), "t-503")
+        self.assertEqual(reply, "AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요.")
+
+    def test_그_외_오류면_기존_문구(self):
+        # 라우터가 LLM 오류가 아닌 예외를 내면 재시도 후 general_agent로 폴백한다.
+        # general_agent의 LLM(llm)도 Mock으로 막아, 분류되지 않은 예외가 기존 문구로 처리되는지 확인한다
+        mock_general_llm = MagicMock()
+        mock_general_llm.invoke.side_effect = RuntimeError("unexpected")
+        with patch.object(agent_module, "llm", mock_general_llm):
+            reply, calls = self.ask_with_router_error(KeyError("unexpected"), "t-etc")
+        self.assertEqual(reply, "AI 에이전트 처리 중 오류가 발생했습니다.")
+        self.assertEqual(calls, 2)  # 라우터는 1회 재시도
+        self.assertEqual(mock_general_llm.invoke.call_count, 1)  # 폴백으로 general_agent까지 감
+
+
+if __name__ == "__main__":
+    unittest.main()
