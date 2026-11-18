@@ -10,7 +10,7 @@ LangGraph 기반 멀티 에이전트로 **경매장 시세 조회 · 캐릭터 �
 
 | 에이전트 | 하는 일 | 사용 Tool |
 | --- | --- | --- |
-| Router | 질문 의도를 4개 경로 중 하나로 분류 (Structured Output) | – |
+| Router | 질문 의도를 4개 경로 중 하나로 분류 (Structured Output). 분류 실패 시 1회 재시도 후 General Agent로 폴백 | – |
 | Market Agent | 경매장 아이템의 전일 평균가·최근 거래가 조회 | `get_market_options` → `search_market_items` |
 | Character Agent | 캐릭터 기본 프로필(서버, 직업, 레벨, 전투력, 길드) 조회 | `get_character_profile` |
 | Guide Agent | 레이드 공략 문서 RAG 검색, 정보가 부족하면 재검색 | `search_game_guide` |
@@ -47,7 +47,8 @@ LoaAgent/
 │  │  ├─ DBupdate.py          # 공략 문서 증분 임베딩 (변경된 파일만 재적재)
 │  │  └─ utils.py             # Stove API 공통 헤더, 에러 핸들러
 │  ├─ data/raids/             # 레이드 공략 Markdown 문서
-│  └─ router_eval.py          # 라우터 분기 정확도 테스트 (40문항)
+│  ├─ router_eval.py          # 라우터 분기 정확도 테스트 (40문항)
+│  └─ test_router_fallback.py # 라우터 재시도·폴백 단위 테스트 (Mock, API 호출 없음)
 └─ backend/loaagent/          # Spring Boot (인증·세션·화면)
 ```
 
@@ -97,8 +98,15 @@ python router_eval.py
 
 에이전트별 10문항, 총 40문항으로 라우터의 분류 결과를 기대 경로와 비교합니다. (2026-11-17 측정: 40/40, 단일 턴 질문 기준)
 
+라우터 실패 대응(재시도 + General Agent 폴백)은 LLM을 Mock으로 바꾼 단위 테스트로 확인합니다. (가상환경 활성화 후 실행)
+
+```bash
+cd ai-agent
+python -m unittest test_router_fallback -v
+```
+
 ## 한계와 개선 계획
 
 - 대화 맥락은 메모리(`MemorySaver`)에만 저장되어 서버를 재시작하면 초기화됨
-- 라우터 구조화 출력 파싱 실패 시 재시도 미구현
+- 라우터 폴백은 분류 실패만 대응함 → Gemini API 장애나 429(사용량 제한)처럼 LLM 호출 자체가 실패하면 General Agent도 같은 LLM을 쓰므로 응답 실패. LLM 오류 종류별 처리는 미구현
 - 벡터 검색만 사용 → 하이브리드 검색(BM25 + 벡터)과 리랭커 도입 검토
