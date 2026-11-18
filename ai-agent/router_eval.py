@@ -5,6 +5,7 @@
 실행 방법:
 - 단일 턴: python router_eval.py              (질문 40개 = Gemini API 호출 40회)
 - 멀티턴: python router_eval.py multiturn    (28건 x 2회(맥락 있음/없음) = 호출 56회)
+- 어려운 멀티턴: python router_eval.py hard  (17건 x 2회 = 호출 34회)
 - 라우터 LLM만 호출합니다. Stove API·Chroma는 호출하지 않습니다.
 """
 import sys
@@ -111,14 +112,58 @@ def classify(messages):
         return f"ERROR({type(e).__name__})"
 
 
-def main_multiturn():
+# 어려운 멀티턴: ([(이전 질문, 이전 답변), ...], 후속 질문, 기대 경로, 유형)
+# - 유형 "같은 질문": 단서가 없는 같은 후속 질문을 서로 다른 앞 대화와 짝지어, 앞 대화에 따라 정답 경로가 달라지는지 확인
+# - 유형 "두 턴 전": 바로 앞이 아니라 두 턴 전 주제로 돌아가는 질문
+# - 두 영역이 섞인 질문은 현재 구조(한 턴에 에이전트 하나)로 답할 수 없어 여기서 측정하지 않음
+GUIDE_TURN = ("세르카 1관문 기믹 알려줘", "세르카 1관문은 시작 직후 장판 패턴과 카운터 패턴이 핵심이에요.")
+MARKET_TURN = ("운명의 파괴석 결정 가격", "운명의 파괴석 결정은 전일 평균가 85 골드, 최근 거래가 83 골드예요.")
+CHARACTER_TURN = ("모코코짱123 전투력 알려줘", "모코코짱123의 전투력은 1,850,000이에요.")
+GENERAL_TURN = ("점심 메뉴 추천해줘", "오늘은 따뜻한 김치찌개 어떠세요?")
+
+HARD_CASES = [
+    # 같은 질문 - "그거 자세히 알려줘"
+    ([GUIDE_TURN], "그거 자세히 알려줘", "guide_agent", "같은 질문"),
+    ([MARKET_TURN], "그거 자세히 알려줘", "market_agent", "같은 질문"),
+    ([CHARACTER_TURN], "그거 자세히 알려줘", "character_agent", "같은 질문"),
+    # 같은 질문 - "그거 괜찮은 거야?"
+    ([MARKET_TURN], "그거 괜찮은 거야?", "market_agent", "같은 질문"),
+    ([CHARACTER_TURN], "그거 괜찮은 거야?", "character_agent", "같은 질문"),
+    ([GENERAL_TURN], "그거 괜찮은 거야?", "general_agent", "같은 질문"),
+    # 같은 질문 - "다른 건?"
+    ([GUIDE_TURN], "다른 건?", "guide_agent", "같은 질문"),
+    ([MARKET_TURN], "다른 건?", "market_agent", "같은 질문"),
+    ([GENERAL_TURN], "다른 건?", "general_agent", "같은 질문"),
+    # 같은 질문 - "그거 다시 말해줘"
+    ([GUIDE_TURN], "그거 다시 말해줘", "guide_agent", "같은 질문"),
+    ([MARKET_TURN], "그거 다시 말해줘", "market_agent", "같은 질문"),
+    ([CHARACTER_TURN], "그거 다시 말해줘", "character_agent", "같은 질문"),
+    # 두 턴 전 주제로 돌아가기
+    ([CHARACTER_TURN, GUIDE_TURN], "아까 그 캐릭터 길드는?", "character_agent", "두 턴 전"),
+    ([MARKET_TURN, CHARACTER_TURN], "아까 그 재료 어제보다 올랐어?", "market_agent", "두 턴 전"),
+    ([CHARACTER_TURN, MARKET_TURN], "처음에 물어본 그 사람 서버는?", "character_agent", "두 턴 전"),
+    ([GUIDE_TURN, MARKET_TURN], "아까 그거 다시 설명해줘", "guide_agent", "두 턴 전"),
+    ([MARKET_TURN, GENERAL_TURN], "아까 그 가격 다시 알려줘", "market_agent", "두 턴 전"),
+]
+
+
+def to_messages(history, follow_up):
+    """[(질문, 답변), ...] + 후속 질문을 라우터에 넣을 메시지 목록으로 바꾼다"""
+    messages = []
+    for question, answer in history:
+        messages += [HumanMessage(content=question), AIMessage(content=answer)]
+    return messages + [HumanMessage(content=follow_up)]
+
+
+def run_context_eval(cases, title):
     """후속 질문을 '앞 대화와 함께' 넣은 결과와 '후속 질문만' 넣은 결과를 비교한다"""
     stats = defaultdict(lambda: {"total": 0, "with_ctx": 0, "no_ctx": 0})
     wrong = []
 
-    for prev_q, prev_a, follow_up, expected, case_type in MULTITURN_CASES:
+    for history, follow_up, expected, case_type in cases:
+        prev_desc = " → ".join(question for question, _ in history)
         # 실제 서비스처럼 이전 질문·답변 뒤에 후속 질문을 붙여 라우터에 전달
-        with_ctx = classify([HumanMessage(content=prev_q), AIMessage(content=prev_a), HumanMessage(content=follow_up)])
+        with_ctx = classify(to_messages(history, follow_up))
         time.sleep(0.5)  # 요청 속도 제한 대비
         # 비교용: 앞 대화 없이 후속 질문만 전달
         no_ctx = classify([HumanMessage(content=follow_up)])
@@ -129,11 +174,11 @@ def main_multiturn():
         stats[key]["with_ctx"] += with_ctx == expected
         stats[key]["no_ctx"] += no_ctx == expected
         if with_ctx != expected:
-            wrong.append((prev_q, follow_up, expected, with_ctx))
-        print(f"[{'O' if with_ctx == expected else 'X'}] ({case_type}) {prev_q} → {follow_up} "
+            wrong.append((prev_desc, follow_up, expected, with_ctx))
+        print(f"[{'O' if with_ctx == expected else 'X'}] ({case_type}) {prev_desc} → {follow_up} "
               f"-> 맥락 있음: {with_ctx} / 맥락 없음: {no_ctx}")
 
-    print("\n=== 멀티턴 결과 ===")
+    print(f"\n=== {title} 결과 ===")
     print(f"측정일: {time.strftime('%Y-%m-%d')}")
     print("유형/기대 경로: 맥락 있음 정답 수 / 맥락 없음 정답 수 / 전체")
     for key in sorted(stats):
@@ -145,8 +190,8 @@ def main_multiturn():
 
     if wrong:
         print("\n=== 맥락이 있는데도 잘못 분기된 질문 ===")
-        for prev_q, follow_up, exp, act in wrong:
-            print(f"- {prev_q} → {follow_up} (기대: {exp}, 실제: {act})")
+        for prev_desc, follow_up, exp, act in wrong:
+            print(f"- {prev_desc} → {follow_up} (기대: {exp}, 실제: {act})")
 
 
 def main():
@@ -181,7 +226,12 @@ def main():
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "multiturn":
-        main_multiturn()
+    mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    if mode == "multiturn":
+        # 기존 멀티턴 케이스는 (이전 질문, 이전 답변)이 한 턴이므로 같은 형식으로 바꿔서 실행
+        cases = [([(q, a)], follow_up, exp, t) for q, a, follow_up, exp, t in MULTITURN_CASES]
+        run_context_eval(cases, "멀티턴")
+    elif mode == "hard":
+        run_context_eval(HARD_CASES, "어려운 멀티턴")
     else:
         main()
