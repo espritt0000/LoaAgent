@@ -135,6 +135,23 @@ cd backend/loaagent
 .\gradlew test --tests "com.esprit.loaagent.chat.ChatApiControllerTimeoutTest"
 ```
 
+## 회원가입 입력값 검증
+
+회원가입 폼은 Bean Validation(`spring-boot-starter-validation`)으로 서버에서 검증하고, 오류가 있으면 저장하지 않고 입력값과 함께 필드별 오류 메시지를 보여 줍니다(비밀번호는 다시 채우지 않음).
+
+| 항목 | 규칙 |
+| --- | --- |
+| 아이디 | 필수, 4~20자, 영문·숫자만 |
+| 비밀번호 | 필수, 8~64자, 영문·숫자·특수문자만(공백·한글 불가) |
+| 이메일 | 필수, 이메일 형식 |
+
+비밀번호에 한글을 막는 이유: `BCryptPasswordEncoder`는 72바이트를 넘는 비밀번호에 예외를 던지는데(spring-security-crypto 7.1.2에서 직접 확인), 한글은 1자에 3바이트라 글자 수 제한만으로는 막을 수 없습니다. 1자 1바이트 문자만 허용하고 64자로 제한해 72바이트를 넘지 않게 했습니다.
+
+```bash
+cd backend/loaagent
+.\gradlew test --tests "com.esprit.loaagent.member.MemberSignupValidationTest"
+```
+
 ## 한계와 개선 계획
 
 - 대화 맥락은 메모리(`MemorySaver`)에만 저장되어 서버를 재시작하면 초기화됨
