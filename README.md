@@ -27,6 +27,8 @@ LangGraph 기반 멀티 에이전트로 **경매장 시세 조회 · 캐릭터 �
                                                      (모든 에이전트의 LLM: Gemini)
 ```
 
+Spring Boot → FastAPI 호출에는 연결 3초, 응답 60초 제한 시간을 둡니다(`application.properties`의 `fastapi.*`, 환경 변수로 변경 가능). 시간 초과(504), 연결 실패(503), FastAPI 오류 응답(502)마다 채팅 화면에 다른 안내 문구를 보여 줍니다.
+
 ## 기술 스택
 
 - **AI 서버**: Python, FastAPI, LangGraph, LangChain, Gemini (`gemini-3.5-flash-lite`)
@@ -105,8 +107,19 @@ cd ai-agent
 python -m unittest test_router_fallback -v
 ```
 
+## FastAPI 호출 타임아웃 테스트
+
+가짜 FastAPI 서버(JDK 내장 `HttpServer`)로 정상 응답, 응답 지연, 서버 꺼짐, 500 응답을 만들어 상태 코드와 안내 문구를 확인합니다. Spring 컨텍스트를 띄우지 않아 MySQL 없이 실행됩니다.
+
+```bash
+cd backend/loaagent
+.\gradlew test --tests "com.esprit.loaagent.chat.ChatApiControllerTimeoutTest"
+```
+
 ## 한계와 개선 계획
 
 - 대화 맥락은 메모리(`MemorySaver`)에만 저장되어 서버를 재시작하면 초기화됨
 - 라우터 폴백은 분류 실패만 대응함 → Gemini API 장애나 429(사용량 제한)처럼 LLM 호출 자체가 실패하면 General Agent도 같은 LLM을 쓰므로 응답 실패. LLM 오류 종류별 처리는 미구현
+- Spring 쪽 타임아웃은 기다림만 끊음 → FastAPI는 요청을 끝까지 처리하고 그 답변이 대화 기록(`MemorySaver`)에 남아, 사용자가 보지 못한 답변이 다음 질문의 맥락에 섞일 수 있음
+- 응답 제한 시간 60초는 실측값이 아님. Gemini 클라이언트는 기본 `max_retries=6`, `timeout` 미설정(langchain-google-genai 4.4.2 기준)이라 API가 불안정하면 FastAPI 처리 시간이 60초를 넘을 수 있음
 - 벡터 검색만 사용 → 하이브리드 검색(BM25 + 벡터)과 리랭커 도입 검토
