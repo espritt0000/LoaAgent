@@ -6,6 +6,7 @@
 - 단일 턴: python router_eval.py              (질문 40개 = Gemini API 호출 40회)
 - 멀티턴: python router_eval.py multiturn    (28건 x 2회(맥락 있음/없음) = 호출 56회)
 - 어려운 멀티턴: python router_eval.py hard  (17건 x 2회 = 호출 34회)
+- 섞인 질문: python router_eval.py compound  (12건 = 호출 12회)
 - 라우터 LLM만 호출합니다. Stove API·Chroma는 호출하지 않습니다.
 - 모델 바꿔서 측정: .env의 LLM_MODEL을 바꾸거나 실행할 때 지정 (Git Bash 예: LLM_MODEL=gemini-3.1-flash-lite python router_eval.py)
 """
@@ -148,6 +149,51 @@ HARD_CASES = [
 ]
 
 
+# 두 영역이 섞인 질문(에이전트 간 협업 14번): (질문, 필요한 에이전트 목록, 유형)
+# - 유형 "의존": 앞 에이전트의 결과가 있어야 답할 수 있음 (공략 문서의 입장 레벨 → 캐릭터 아이템 레벨과 비교)
+# - 유형 "독립": 두 질문을 한 문장에 묶어, 각각 따로 답하면 됨
+# - 유형 "함정": 대상이 둘이라 섞인 것처럼 보이지만 에이전트 하나로 답할 수 있음
+# - 공략 문서에는 재료·골드 정보가 없고 입장 레벨만 있어, "레이드 가려면 재료값 얼마?" 같은 질문은 넣지 않음
+COMPOUND_CASES = [
+    # 의존 - 공략(입장 레벨) + 캐릭터(아이템 레벨)
+    ("모코코짱123으로 칠흑 폭풍의 밤 하드 갈 수 있어?", ["guide_agent", "character_agent"], "의존"),
+    ("테스트닉네임 템렙이면 종막 하드 입장 가능해?", ["guide_agent", "character_agent"], "의존"),
+    ("샘플유저가 지평의 성당 3단계 갈 수 있는 레벨이야?", ["guide_agent", "character_agent"], "의존"),
+    ("가상캐릭터A로 파멸의 성채 노말 입장되나?", ["guide_agent", "character_agent"], "의존"),
+    # 독립 - 두 질문을 한 문장에
+    ("종막 2관문 패턴이랑 운명의 파괴석 결정 시세 알려줘", ["guide_agent", "market_agent"], "독립"),
+    ("세르카 1관문 기믹 알려주고 운명의 돌파석 가격도 알려줘", ["guide_agent", "market_agent"], "독립"),
+    ("모코코짱123 전투력이랑 운명의 수호석 결정 시세 알려줘", ["character_agent", "market_agent"], "독립"),
+    ("테스트닉네임 길드 어디야? 그리고 보석 경매장 가격도 알려줘", ["character_agent", "market_agent"], "독립"),
+    ("벨가르딘 관문 구성이랑 샘플유저 아이템 레벨 알려줘", ["guide_agent", "character_agent"], "독립"),
+    # 함정 - 에이전트 하나로 충분
+    ("운명의 파괴석 결정이랑 운명의 돌파석 시세 비교해줘", ["market_agent"], "함정"),
+    ("세르카랑 벨가르딘 중에 관문이 더 많은 건 어디야?", ["guide_agent"], "함정"),
+    ("모코코짱123 템렙이랑 전투력 알려줘", ["character_agent"], "함정"),
+]
+
+
+def run_compound_eval():
+    """현재 라우터(에이전트 하나만 선택)가 섞인 질문에서 어느 에이전트를 고르는지 기록한다.
+    필요한 에이전트가 둘인 질문은 현재 구조로는 하나만 실행되므로, 고른 쪽이 필요한 에이전트 중 하나인지(반쪽)만 센다"""
+    stats = defaultdict(lambda: {"total": 0, "hit": 0})
+    for question, expected, case_type in COMPOUND_CASES:
+        actual = classify([HumanMessage(content=question)])
+        time.sleep(0.5)  # 요청 속도 제한 대비
+        stats[case_type]["total"] += 1
+        stats[case_type]["hit"] += actual in expected
+        mark = "O" if actual in expected else "X"
+        print(f"[{mark}] ({case_type}) {question} -> {actual} (필요: {' + '.join(expected)})")
+
+    print("\n=== 섞인 질문 결과 ===")
+    print(f"측정일: {time.strftime('%Y-%m-%d')}")
+    print("의존·독립: 고른 에이전트가 필요한 둘 중 하나인 수 (현재 구조는 하나만 실행 → 반쪽 답) / 전체")
+    print("함정: 고른 에이전트가 정답인 수 / 전체")
+    for case_type in ["의존", "독립", "함정"]:
+        s = stats[case_type]
+        print(f"{case_type}: {s['hit']} / {s['total']}")
+
+
 def to_messages(history, follow_up):
     """[(질문, 답변), ...] + 후속 질문을 라우터에 넣을 메시지 목록으로 바꾼다"""
     messages = []
@@ -234,5 +280,7 @@ if __name__ == "__main__":
         run_context_eval(cases, "멀티턴")
     elif mode == "hard":
         run_context_eval(HARD_CASES, "어려운 멀티턴")
+    elif mode == "compound":
+        run_compound_eval()
     else:
         main()
