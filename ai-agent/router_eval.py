@@ -5,8 +5,10 @@
 실행 방법:
 - 단일 턴: python router_eval.py              (질문 40개 = Gemini API 호출 40회)
 - 멀티턴: python router_eval.py multiturn    (28건 x 2회(맥락 있음/없음) = 호출 56회)
-- 어려운 멀티턴: python router_eval.py hard  (17건 x 2회 = 호출 34회)
+- 어려운 멀티턴: python router_eval.py hard  (24건 x 2회 = 호출 48회)
+- 맥락 있는 쪽만 측정: 뒤에 --ctx-only (예: python router_eval.py hard --ctx-only → 24회). 비교용 '후속 질문만' 호출을 건너뜀
 - 섞인 질문: python router_eval.py compound  (12건 = 호출 12회)
+- 처음 보는 질문: python router_eval.py holdout  (10건 = 호출 10회, 맥락 있는 쪽만)
 - 라우터 LLM만 호출합니다. Stove API·Chroma는 호출하지 않습니다.
 - 모델 바꿔서 측정: .env의 LLM_MODEL을 바꾸거나 실행할 때 지정 (Git Bash 예: LLM_MODEL=gemini-3.1-flash-lite python router_eval.py)
 """
@@ -132,7 +134,8 @@ HARD_CASES = [
     ([CHARACTER_TURN], "그거 자세히 알려줘", "character_agent", "같은 질문"),
     # 같은 질문 - "그거 괜찮은 거야?"
     ([MARKET_TURN], "그거 괜찮은 거야?", "market_agent", "같은 질문"),
-    ([CHARACTER_TURN], "그거 괜찮은 거야?", "character_agent", "같은 질문"),
+    # 전투력이 괜찮은지 판단할 비교 기준 데이터가 어느 에이전트에도 없어, 정답 경로를 정할 수 없음 → 점수 제외
+    ([CHARACTER_TURN], "그거 괜찮은 거야?", None, "정답 없음"),
     ([GENERAL_TURN], "그거 괜찮은 거야?", "general_agent", "같은 질문"),
     # 같은 질문 - "다른 건?"
     ([GUIDE_TURN], "다른 건?", "guide_agent", "같은 질문"),
@@ -146,10 +149,45 @@ HARD_CASES = [
     ([CHARACTER_TURN, GUIDE_TURN], "아까 그 캐릭터 길드는?", "character_agent", "두 턴 전"),
     ([MARKET_TURN, CHARACTER_TURN], "아까 그 재료 어제보다 올랐어?", "market_agent", "두 턴 전"),
     ([CHARACTER_TURN, MARKET_TURN], "처음에 물어본 그 사람 서버는?", "character_agent", "두 턴 전"),
-    ([GUIDE_TURN, MARKET_TURN], "아까 그거 다시 설명해줘", "guide_agent", "두 턴 전"),
+    # "아까 그거"가 공략인지 시세인지 사람이 봐도 모호함. 둘 중 어느 쪽이든(둘 다 포함) 전문 에이전트로 가면 정답,
+    # 일반 대화(general)로 빠지면 오답으로 본다
+    ([GUIDE_TURN, MARKET_TURN], "아까 그거 다시 설명해줘", ("guide_agent", "market_agent"), "두 턴 전"),
     ([MARKET_TURN, GENERAL_TURN], "아까 그 가격 다시 알려줘", "market_agent", "두 턴 전"),
+    # 단서 없이 두 턴 전으로 돌아가는 질문 (앞 전문 주제가 하나뿐이라 정답이 분명함)
+    ([GUIDE_TURN, GENERAL_TURN], "아까 그거 다시 설명해줘", "guide_agent", "두 턴 전(단서 없음)"),
+    ([CHARACTER_TURN, GENERAL_TURN], "아까 그거 다시 알려줘", "character_agent", "두 턴 전(단서 없음)"),
+    ([MARKET_TURN, GENERAL_TURN], "아까 말한 거 다시 알려줘", "market_agent", "두 턴 전(단서 없음)"),
+    # 앞 대화 없이 지시어만 있는 질문: 가리킬 대상이 없으므로 general_agent
+    # (지시어를 앞 대화로 해석하라는 규칙이 앞 대화가 없을 때까지 전문 에이전트로 보내지 않는지 확인)
+    ([], "그거 자세히 알려줘", "general_agent", "앞 대화 없음"),
+    ([], "그거 다시 말해줘", "general_agent", "앞 대화 없음"),
+    ([], "아까 그거 다시 설명해줘", "general_agent", "앞 대화 없음"),
+    ([], "아까 말한 거 다시 알려줘", "general_agent", "앞 대화 없음"),
 ]
 
+
+# 처음 보는 질문(과적합 확인): v3 [이전 대화 활용] 규칙을 다듬을 때 보지 않은 질문
+# - HARD_CASES로 규칙을 세 번 고쳤으므로, 그 질문에만 맞춰졌는지 확인하려고 따로 둔다
+# - 앞 대화 주제(벨가르딘·돌파석·샘플유저)와 말투를 HARD_CASES와 다르게 하고, 규칙마다 최소 한 문항
+# - 이 질문을 보고 규칙을 고치면 더 이상 '처음 보는 질문'이 아니므로, 규칙을 고친 뒤에는 새 질문을 만들 것
+HOLDOUT_GUIDE = ("벨가르딘 2관문 공략 알려줘", "벨가르딘 2관문은 무력화 패턴 뒤 전멸기를 피하는 것이 핵심이에요.")
+HOLDOUT_MARKET = ("운명의 돌파석 시세 어때?", "운명의 돌파석은 최근 거래가 120 골드예요.")
+HOLDOUT_CHARACTER = ("샘플유저 아이템 레벨 몇이야?", "샘플유저의 아이템 레벨은 1,740이에요.")
+HOLDOUT_SMALLTALK = ("요즘 너무 피곤하다", "푹 쉬는 것도 중요해요. 오늘은 일찍 주무세요!")
+
+HOLDOUT_CASES = [
+    ([HOLDOUT_MARKET], "그거 지난주랑 비교하면 어때?", "market_agent", "생략·지시어"),
+    ([HOLDOUT_GUIDE], "거기서 제일 어려운 패턴은 뭐야?", "guide_agent", "생략·지시어"),
+    ([HOLDOUT_CHARACTER], "그 사람 직업은 뭐야?", "character_agent", "생략·지시어"),
+    ([HOLDOUT_GUIDE, HOLDOUT_SMALLTALK], "아까 하던 얘기 이어서 해줘", "guide_agent", "이전 시점(잡담 사이)"),
+    ([HOLDOUT_CHARACTER, HOLDOUT_SMALLTALK], "아까 걔 전투력은?", "character_agent", "이전 시점(잡담 사이)"),
+    ([HOLDOUT_MARKET, HOLDOUT_GUIDE], "처음에 물어본 거 지금도 그 가격이야?", "market_agent", "이전 시점(주제 사이)"),
+    ([HOLDOUT_MARKET], "그건 됐고 세르카 1관문 기믹 알려줘", "guide_agent", "새 주제 우선"),
+    # 부작용 확인: 전문 에이전트로 보내면 안 되는 질문
+    ([HOLDOUT_CHARACTER], "고마워, 덕분에 알았어", "general_agent", "부작용(인사)"),
+    ([HOLDOUT_SMALLTALK], "그거 말고 다른 방법은?", "general_agent", "부작용(잡담 지시어)"),
+    ([], "그 사람 길드 어디야?", "general_agent", "부작용(앞 대화 없음)"),
+]
 
 # 두 영역이 섞인 질문(에이전트 간 협업 14번): (질문, 필요한 에이전트 목록, 유형)
 # - 유형 "의존": 앞 에이전트의 결과가 있어야 답할 수 있음 (공략 문서의 입장 레벨 → 캐릭터 아이템 레벨과 비교)
@@ -203,8 +241,9 @@ def to_messages(history, follow_up):
     return messages + [HumanMessage(content=follow_up)]
 
 
-def run_context_eval(cases, title):
-    """후속 질문을 '앞 대화와 함께' 넣은 결과와 '후속 질문만' 넣은 결과를 비교한다"""
+def run_context_eval(cases, title, ctx_only=False):
+    """후속 질문을 '앞 대화와 함께' 넣은 결과와 '후속 질문만' 넣은 결과를 비교한다
+    ctx_only=True면 '후속 질문만' 호출을 건너뛰어 API 호출을 절반으로 줄인다 (결과에는 '-'로 표시)"""
     stats = defaultdict(lambda: {"total": 0, "with_ctx": 0, "no_ctx": 0})
     wrong = []
 
@@ -214,16 +253,30 @@ def run_context_eval(cases, title):
         with_ctx = classify(to_messages(history, follow_up))
         time.sleep(0.5)  # 요청 속도 제한 대비
         # 비교용: 앞 대화 없이 후속 질문만 전달
-        no_ctx = classify([HumanMessage(content=follow_up)])
-        time.sleep(0.5)
+        if ctx_only:
+            no_ctx = "-"
+        else:
+            no_ctx = classify([HumanMessage(content=follow_up)])
+            time.sleep(0.5)
 
-        key = f"{case_type}/{expected}"
+        # 정답 없음(None): 어느 에이전트도 근거 있게 답할 수 없는 질문이라 점수에서 빼고 결과만 기록
+        if expected is None:
+            print(f"[-] ({case_type}) {prev_desc} → {follow_up} "
+                  f"-> 맥락 있음: {with_ctx} / 맥락 없음: {no_ctx} (정답 없음, 점수 제외)")
+            continue
+
+        # 기대 경로가 튜플이면 그중 어느 쪽이든 정답. 계획의 모든 에이전트가 허용 목록 안에 있어야 정답
+        # (단일 기대 경로면 1단계로 그 에이전트만 골라야 정답, 모호한 지시어는 공략·시세 하나 또는 둘 다 허용)
+        accepted = expected if isinstance(expected, tuple) else (expected,)
+        def ok(result):
+            return set(result.split("+")) <= set(accepted)
+        key = f"{case_type}/{'|'.join(accepted)}"
         stats[key]["total"] += 1
-        stats[key]["with_ctx"] += with_ctx == expected
-        stats[key]["no_ctx"] += no_ctx == expected
-        if with_ctx != expected:
-            wrong.append((prev_desc, follow_up, expected, with_ctx))
-        print(f"[{'O' if with_ctx == expected else 'X'}] ({case_type}) {prev_desc} → {follow_up} "
+        stats[key]["with_ctx"] += ok(with_ctx)
+        stats[key]["no_ctx"] += ok(no_ctx)
+        if not ok(with_ctx):
+            wrong.append((prev_desc, follow_up, "|".join(accepted), with_ctx))
+        print(f"[{'O' if ok(with_ctx) else 'X'}] ({case_type}) {prev_desc} → {follow_up} "
               f"-> 맥락 있음: {with_ctx} / 맥락 없음: {no_ctx}")
 
     print(f"\n=== {title} 결과 ===")
@@ -270,13 +323,16 @@ def main():
 
 
 if __name__ == "__main__":
-    mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    mode = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("--") else ""
+    ctx_only = "--ctx-only" in sys.argv
     if mode == "multiturn":
         # 기존 멀티턴 케이스는 (이전 질문, 이전 답변)이 한 턴이므로 같은 형식으로 바꿔서 실행
         cases = [([(q, a)], follow_up, exp, t) for q, a, follow_up, exp, t in MULTITURN_CASES]
-        run_context_eval(cases, "멀티턴")
+        run_context_eval(cases, "멀티턴", ctx_only)
     elif mode == "hard":
-        run_context_eval(HARD_CASES, "어려운 멀티턴")
+        run_context_eval(HARD_CASES, "어려운 멀티턴", ctx_only)
+    elif mode == "holdout":
+        run_context_eval(HOLDOUT_CASES, "처음 보는 질문", ctx_only=True)
     elif mode == "compound":
         run_compound_eval()
     else:
