@@ -60,7 +60,8 @@ LoaAgent/
 │  │  ├─ DBupdate.py          # 공략 문서 증분 임베딩 (변경된 파일만 재적재)
 │  │  └─ utils.py             # Stove API 공통 헤더, 에러 핸들러
 │  ├─ data/raids/             # 레이드 공략 Markdown 문서 6개 (세르카, 벨가르딘, 칠흑 폭풍의 밤, 파멸의 성채, 최후의 날, 지평의 성당)
-│  ├─ router_eval.py          # 라우터 분기 테스트 (단일 턴 40 / multiturn 28 / hard 17)
+│  ├─ router_eval.py          # 라우터 분기 테스트 (단일 턴 40 / multiturn 28 / hard 17 / compound 12)
+│  ├─ compound_eval.py        # 두 영역이 섞인 질문 실제 답변 확인 (그래프 전체 실행, 6문항)
 │  ├─ rag_eval.py             # RAG 검색 평가 (검색어 55개 + 문서 없는 검색어 10개)
 │  ├─ test_router_fallback.py # 라우터 재시도·폴백 단위 테스트 (Mock, API 호출 없음)
 │  ├─ test_llm_error_messages.py # LLM 오류 종류별 안내 문구 테스트 (Mock, API 호출 없음)
@@ -129,6 +130,7 @@ FastAPI 호출 제한 시간은 `application.properties`의 `fastapi.*`(연결 3
 | k=1 규칙 삭제 (검색어 26개, 청크 6개) | 동적 k 적중 21/26 → 24/26 | `python rag_eval.py` | 7.4 |
 | 검색어 레이드 이름 유지 규칙 (8문항 × 3회, 3.1) | 이름 유지 9/24 → 17/24 | – | 7.4 |
 | 문서에 없는 레이드·보스 거절 | 거절 10/10, 정상 검색어 통과 46/55 | `python rag_eval.py` | 7.4 |
+| 두 영역이 섞인 질문 (현재 구조 기준선, 3.1) | 두 영역 모두 답한 질문 0/5 (에이전트 하나만 실행) | `python compound_eval.py` | 7.5 |
 
 `router_eval.py`는 서비스와 같은 `LLM_MODEL` 설정을 쓰므로 실행할 때 값만 바꾸면 모델별로 비교할 수 있습니다(Git Bash 예: `LLM_MODEL=gemini-3.1-flash-lite python router_eval.py`). 다른 공급자 모델과의 비교는 아직 하지 않았습니다.
 

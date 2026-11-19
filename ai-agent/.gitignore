@@ -21,3 +21,6 @@ data/chat_history.sqlite*
 
 # 에디터
 .vscode/
+
+# 섞인 질문 실제 답변 확인 결과 (compound_eval.py, 답변 전문)
+compound_eval_answers.json
