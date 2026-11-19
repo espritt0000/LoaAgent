@@ -9,7 +9,7 @@ from langchain_core.exceptions import (
     ModelTimeoutError,
     ModelConnectionError,
 )
-from agent.agent import app as agent_app
+from agent.agent import app as agent_app, checkpointer
 
 fastapi_app = FastAPI()
 
@@ -19,6 +19,23 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+
+class HistoryMessage(BaseModel):
+    role: str     # "user" 또는 "ai"
+    content: str
+
+class HistoryResponse(BaseModel):
+    messages: list[HistoryMessage]
+
+# 화면에 다시 보여 줄 최근 메시지 수 (저장소에는 전체가 남아 있음)
+HISTORY_LIMIT = 50
+
+
+def to_text(content) -> str:
+    """Gemini는 답변을 [{'type': 'text', 'text': ...}] 같은 리스트로 줄 때가 있어 문자열로 합친다"""
+    if isinstance(content, list):
+        return "".join(item.get("text", "") if isinstance(item, dict) else str(item) for item in content)
+    return content
 
 @fastapi_app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(chatRequest: ChatRequest):
@@ -42,17 +59,8 @@ def chat_endpoint(chatRequest: ChatRequest):
         message = result.get("messages",[])
         if message:
             final_message = message[-1]
-            raw_content = final_message.content
-            
             # 💡 구글 Gemini 특유의 리스트 형태 응답 처리 (텍스트 덩어리 추출)
-            if isinstance(raw_content, list):
-                print("Context type: list")
-                ai_reply = "".join(
-                    item.get("text", "") if isinstance(item, dict) else str(item)
-                    for item in raw_content
-                )
-            else:
-                ai_reply = raw_content  # 문자열 응답은 그대로 사용
+            ai_reply = to_text(final_message.content)
         else:
             ai_reply = "답변을 생성하지 못했습니다."
 
@@ -72,3 +80,30 @@ def chat_endpoint(chatRequest: ChatRequest):
         ai_reply = "AI 에이전트 처리 중 오류가 발생했습니다."
 
     return ChatResponse(reply=ai_reply)
+
+
+@fastapi_app.get("/history", response_model=HistoryResponse)
+def history_endpoint(thread_id: str):
+    """저장된 대화에서 사용자 질문과 최종 AI 답변만 골라 돌려준다 (새로고침 후 화면 복원용)"""
+    state = agent_app.get_state({"configurable": {"thread_id": thread_id}})
+    messages = []
+    for msg in state.values.get("messages", []):
+        if msg.type == "human":
+            role = "user"
+        elif msg.type == "ai" and not msg.tool_calls:
+            role = "ai"
+        else:
+            continue  # 툴 호출 요청과 툴 결과는 화면에 보여 주지 않는다
+        text = to_text(msg.content)
+        if text:
+            messages.append(HistoryMessage(role=role, content=text))
+    print(f"📜 [History] thread_id={thread_id}, 메시지 {len(messages)}개 중 최근 {min(len(messages), HISTORY_LIMIT)}개 반환")
+    return HistoryResponse(messages=messages[-HISTORY_LIMIT:])
+
+
+@fastapi_app.delete("/history")
+def delete_history_endpoint(thread_id: str):
+    """'새 대화' 버튼: 이 thread_id의 저장된 대화(체크포인트)를 모두 지운다. 다음 질문부터 빈 대화로 시작된다"""
+    checkpointer.delete_thread(thread_id)
+    print(f"🗑️ [History Delete] thread_id={thread_id} 대화 기록 삭제")
+    return {"deleted": True}

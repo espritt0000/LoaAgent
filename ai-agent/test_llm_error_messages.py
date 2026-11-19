@@ -10,8 +10,10 @@ import unittest
 from unittest.mock import patch, MagicMock
 from langchain_core.exceptions import ModelAPIError
 from langchain_google_genai.chat_models import GoogleRateLimitError, GoogleAuthenticationError
+from langgraph.checkpoint.memory import MemorySaver
 
 import agent.agent as agent_module
+import main
 from main import chat_endpoint, ChatRequest
 
 
@@ -22,6 +24,11 @@ class LLMErrorMessageTest(unittest.TestCase):
         mock_trimmer = trimmer_patch.start()
         mock_trimmer.invoke.side_effect = lambda messages: messages
         self.addCleanup(trimmer_patch.stop)
+
+        # 테스트 대화가 실제 대화 기록 파일(SQLite)에 남지 않도록 메모리 저장소로 만든 그래프를 쓴다
+        app_patch = patch.object(main, "agent_app", agent_module.workflow.compile(checkpointer=MemorySaver()))
+        app_patch.start()
+        self.addCleanup(app_patch.stop)
 
     def ask_with_router_error(self, error, thread_id):
         mock_llm = MagicMock()

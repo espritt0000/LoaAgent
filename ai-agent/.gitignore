@@ -16,5 +16,8 @@ chroma_db_rag/
 data/sync_state.json
 data/vector_visualization.html
 
+# 대화 기록 (CHECKPOINT_DB_PATH)
+data/chat_history.sqlite*
+
 # 에디터
 .vscode/

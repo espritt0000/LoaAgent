@@ -52,7 +52,8 @@ LoaAgent/
 │  ├─ router_eval.py          # 라우터 분기 정확도 테스트 (40문항)
 │  ├─ rag_eval.py             # RAG 검색 평가 (정답 청크 순위, Hit@k, MRR)
 │  ├─ test_router_fallback.py # 라우터 재시도·폴백 단위 테스트 (Mock, API 호출 없음)
-│  └─ test_llm_error_messages.py # LLM 오류 종류별 안내 문구 테스트 (Mock, API 호출 없음)
+│  ├─ test_llm_error_messages.py # LLM 오류 종류별 안내 문구 테스트 (Mock, API 호출 없음)
+│  └─ test_chat_history.py    # 대화 기록 영구 저장·/history 테스트 (Mock + 임시 SQLite)
 └─ backend/loaagent/          # Spring Boot (인증·세션·화면)
 ```
 
@@ -78,6 +79,8 @@ uvicorn main:fastapi_app --port 8000
 ```
 
 **LLM 모델 바꾸기**: 모델은 코드가 아니라 `.env`의 `LLM_PROVIDER`(LangChain 공급자 이름, 서비스에서는 `google_genai`)와 `LLM_MODEL`(서비스에서는 `gemini-3.5-flash-lite`)로 정합니다. 코드에는 기본 모델을 두지 않아, 두 값이 없으면 서버가 시작 단계에서 오류를 내고 멈춥니다(설정이 빠졌는데 다른 모델로 조용히 실행되는 것을 막기 위해). LangChain `init_chat_model`로 만들기 때문에 같은 코드로 다른 공급자도 지정할 수 있지만, `google_genai` 외의 공급자는 해당 패키지(예: `langchain-anthropic`)와 API 키가 필요하고 아직 실행해 보지 않았습니다. 패키지가 없으면 서버 시작 시 `ImportError`가 납니다.
+
+**대화 기록 저장 위치**: `.env`의 `CHECKPOINT_DB_PATH`(예: `data/chat_history.sqlite`, ai-agent 폴더 기준)에 SQLite 파일로 저장합니다. 값이 없으면 서버가 시작 단계에서 멈춥니다. 파일은 처음 실행할 때 자동으로 만들어지고 git에는 올라가지 않습니다.
 
 ### 2. 백엔드 (backend/loaagent)
 
@@ -174,6 +177,27 @@ Gemini 오류는 LangChain 공통 예외(`langchain_core.exceptions`)로 구분�
 cd ai-agent
 python -m unittest test_llm_error_messages -v
 ```
+
+## 대화 기록 영구 저장
+
+대화 맥락은 LangGraph checkpointer로 저장합니다. 처음에는 메모리(`MemorySaver`)라 서버를 다시 시작하면 사라졌고, 대화 키(`thread_id`)도 브라우저가 페이지를 열 때 만든 난수라 새로고침하면 새 대화가 되고 로그인 계정과 연결되지 않았습니다.
+
+- **저장소**: LangGraph 공식 패키지 `langgraph-checkpoint-sqlite`(3.1.3)의 `SqliteSaver`. 새 DB 서버나 접속 정보 없이 파일 하나로 저장되고, 그래프 코드는 checkpointer만 바꾸면 됩니다. FastAPI가 요청을 여러 스레드에서 처리하므로 `check_same_thread=False`로 연결하고, 동시 접근은 `SqliteSaver` 내부 lock이 막습니다.
+- **계정 연결**: `thread_id`는 브라우저가 보낸 값이 아니라 Spring이 로그인 계정으로 정합니다(`user:` + 아이디). 브라우저 값을 그대로 믿으면 다른 사람의 `thread_id`를 넣어 그 사람의 대화를 이어 쓰거나 볼 수 있기 때문입니다. 계정당 대화는 하나입니다.
+- **화면 복원**: 채팅 화면을 열면 `/chat/history`(Spring) → `/history`(FastAPI)로 저장된 대화에서 사용자 질문과 최종 AI 답변만 골라 최근 50개를 다시 보여 줍니다(툴 호출·툴 결과는 제외).
+- **새 대화**: 채팅 화면의 "새 대화" 버튼을 누르면 확인 창을 거쳐 `/chat/history`(Spring, DELETE) → `/history`(FastAPI, DELETE)로 로그인 계정의 저장된 대화를 지우고(`SqliteSaver.delete_thread`), 화면도 첫 안내 메시지만 남깁니다. 지운 대화는 되돌릴 수 없습니다.
+
+```bash
+cd ai-agent
+python -m unittest test_chat_history -v
+
+cd backend/loaagent
+.\gradlew test --tests "com.esprit.loaagent.chat.ChatHistoryApiTest"
+```
+
+- Python(6건): 임시 SQLite 파일로 대화 후 연결을 닫고 새로 연결해도 대화가 남는지, 계정별로 따로 저장되는지, `/history`가 질문과 최종 답변만 최근 50개 돌려주는지, 새 대화(삭제)가 내 계정 대화만 지우고 이후 질문은 빈 대화로 시작하는지 확인
+- Spring(5건): 가짜 FastAPI로 브라우저가 다른 `thread_id`를 보내도 로그인 계정 값으로 바뀌는지, 기록 조회·삭제가 계정 값으로 가는지, 조회·삭제 실패 시 502인지 확인
+- 실제 서버 확인(2026-11-19, Gemini 3.1 Flash Lite): FastAPI에 "내 이름은 테스트야"를 보낸 뒤 서버를 껐다 켜고 `/history`로 두 메시지가 남아 있는 것과, "내 이름이 뭐라고 했지?"에 "테스트"라고 답하는 것을 확인
 
 ## RAG 검색 평가
 
@@ -277,10 +301,11 @@ cd backend/loaagent
 
 ## 한계와 개선 계획
 
-- 대화 맥락은 메모리(`MemorySaver`)에만 저장되어 서버를 재시작하면 초기화됨
+- 대화는 계정당 하나라 "새 대화"를 누르면 이전 대화는 지워짐(여러 대화를 목록으로 보관하는 기능은 없음). 지우기 전까지 대화는 계속 쌓이지만 LLM에는 `trim_messages`로 최근 12,000토큰만 전달됨
+- 대화 기록은 AI 서버 PC의 SQLite 파일에 있어 AI 서버를 여러 대로 늘리면 공유되지 않음(그때는 MySQL·Postgres 같은 DB checkpointer 필요)
 - LLM 오류 안내는 FastAPI가 HTTP 200의 답변 문구로 돌려주므로, 채팅 화면에서는 오류 말풍선이 아닌 일반 답변 말풍선으로 보임
 - 연결 끊김 같은 네트워크 오류가 `ModelConnectionError`로 변환되는지는 확인하지 못함(langchain-google-genai 4.4.2 소스에서는 HTTP 상태 코드 오류만 공통 예외로 변환). 변환되지 않으면 "그 외" 문구로 처리됨
-- Spring 쪽 타임아웃은 기다림만 끊음 → FastAPI는 요청을 끝까지 처리하고 그 답변이 대화 기록(`MemorySaver`)에 남아, 사용자가 보지 못한 답변이 다음 질문의 맥락에 섞일 수 있음
+- Spring 쪽 타임아웃은 기다림만 끊음 → FastAPI는 요청을 끝까지 처리하고 그 답변이 대화 기록(SQLite)에 남아, 사용자가 보지 못한 답변이 다음 질문의 맥락에 섞일 수 있음(새로고침하면 화면에는 보임)
 - 응답 제한 시간 60초는 실측값이 아님. Gemini 클라이언트는 기본 `max_retries=6`, `timeout` 미설정(langchain-google-genai 4.4.2 기준)이라 API가 불안정하면 FastAPI 처리 시간이 60초를 넘을 수 있음
 - 한 턴에 에이전트 하나만 실행 → 공략과 시세가 모두 필요한 질문(예: "세르카 가려면 재료값 얼마나 들어?")에는 반쪽 답만 가능. 에이전트 간 협업(handoff/planner) 검토 중
 - Guide Agent가 검색어를 만들 때 레이드 이름을 바꾸는 문제는 프롬프트 규칙으로 줄였지만 남아 있음(Gemini 3.1 Flash Lite 측정에서 이름 유지 9/24 → 17/24). 프롬프트만으로는 완전히 막기 어려워, 사용자 질문의 레이드 이름을 코드로 검색어에 넣는 방식 등을 검토할 수 있음

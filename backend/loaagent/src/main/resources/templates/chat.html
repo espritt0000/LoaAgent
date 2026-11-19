@@ -17,6 +17,12 @@
 
 <!-- 채팅 메인 영역 -->
 <main class="max-w-4xl mx-auto w-full flex-grow flex flex-col p-4 overflow-hidden">
+    <!-- 새 대화: 저장된 이전 대화를 지우고 처음부터 시작 -->
+    <div class="shrink-0 flex justify-end mb-2">
+        <button type="button" id="new-chat-btn" class="px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 text-sm text-slate-200 transition">
+            새 대화
+        </button>
+    </div>
     <!-- 대화 출력 박스 -->
     <div id="chat-container" class="flex-grow overflow-y-auto space-y-4 pr-2 mb-4">
         <!-- 봇 안내 메시지 -->
@@ -43,17 +49,62 @@
     const chatContainer = document.getElementById('chat-container');
     const chatForm = document.getElementById('chat-form');
     const userInput = document.getElementById('user-input');
-    let thread_id = 'user_' + Math.random().toString(36).substring(2, 11) + Date.now();
+    // 대화 기록 키(thread_id)는 서버가 로그인 계정으로 정하므로 브라우저에서 만들지 않는다
+
+    function appendUserMessage(text) {
+        const userMsgDiv = document.createElement('div');
+        userMsgDiv.className = 'flex items-start justify-end space-x-3';
+        userMsgDiv.innerHTML = `<div class="bg-blue-600 text-white rounded-2xl p-4 max-w-lg text-sm">${escapeHtml(text)}</div>`;
+        chatContainer.appendChild(userMsgDiv);
+    }
+
+    function appendAiMessage(markdown) {
+        const botMsgDiv = document.createElement('div');
+        botMsgDiv.className = 'flex items-start space-x-3';
+        botMsgDiv.innerHTML = `
+            <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold text-sm shrink-0">AI</div>
+            <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 max-w-xl text-sm text-slate-200 prose prose-invert">
+                ${DOMPurify.sanitize(marked.parse(markdown))}
+            </div>`;
+        chatContainer.appendChild(botMsgDiv);
+    }
+
+    // 페이지를 열면 저장된 이전 대화를 불러와 화면에 다시 보여 준다 (실패해도 채팅은 가능)
+    async function loadHistory() {
+        try {
+            const response = await fetch('/chat/history');
+            if (!response.ok) throw new Error('대화 기록 응답 상태 코드: ' + response.status);
+            const data = await response.json(); // { messages: [{ role: "user" | "ai", content: "..." }] }
+            data.messages.forEach(m => m.role === 'user' ? appendUserMessage(m.content) : appendAiMessage(m.content));
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        } catch (error) {
+            console.error('대화 기록을 불러오지 못했습니다:', error);
+        }
+    }
+    loadHistory();
+
+    // '새 대화' 버튼: 서버에 저장된 대화를 지우고 화면도 첫 안내 메시지만 남긴다
+    document.getElementById('new-chat-btn').addEventListener('click', async function() {
+        if (!confirm('이전 대화가 삭제되고 되돌릴 수 없습니다. 새 대화를 시작할까요?')) return;
+        try {
+            const response = await fetch('/chat/history', { method: 'DELETE' });
+            if (!response.ok) throw new Error('대화 삭제 응답 상태 코드: ' + response.status);
+            while (chatContainer.children.length > 1) {
+                chatContainer.lastElementChild.remove();
+            }
+        } catch (error) {
+            console.error('대화 삭제 실패:', error);
+            alert('이전 대화를 지우지 못했습니다. 잠시 후 다시 시도해주세요.');
+        }
+    });
+
     chatForm.addEventListener('submit', async function(e) {
         e.preventDefault();
         const text = userInput.value.trim();
         if (!text) return;
 
         // 1. 유저 메시지 화면에 즉시 추가 (유저는 escapeHtml 유지)
-        const userMsgDiv = document.createElement('div');
-        userMsgDiv.className = 'flex items-start justify-end space-x-3';
-        userMsgDiv.innerHTML = `<div class="bg-blue-600 text-white rounded-2xl p-4 max-w-lg text-sm">${escapeHtml(text)}</div>`;
-        chatContainer.appendChild(userMsgDiv);
+        appendUserMessage(text);
 
         userInput.value = '';
         chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -78,8 +129,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ thread_id: thread_id,
-                    message: text })
+                body: JSON.stringify({ message: text })
             });
 
             if (!response.ok) {
