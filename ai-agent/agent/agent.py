@@ -2,7 +2,7 @@ from typing import Literal
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langchain_core.messages import SystemMessage, trim_messages
+from langchain_core.messages import SystemMessage, HumanMessage, trim_messages
 from langchain_core.exceptions import ModelError
 from pydantic import BaseModel, Field
 import os
@@ -26,6 +26,9 @@ class AgentState(MessagesState):
     - next_node: 라우터가 다음에 실행해야 한다고 판단한 전문 에이전트 노드 이름
     """
     next_node: str = Field(default="", description="다음에 실행할 node 이름")
+    # [Planner] 라우터가 세운 이번 턴의 작업 계획과 현재 단계 번호 (두 영역이 섞인 질문을 순서대로 처리)
+    plan: list = Field(default_factory=list, description="[{'agent': 에이전트 이름, 'task': 이 단계에서 할 일}, ...]")
+    step: int = Field(default=0, description="지금 실행 중인 계획 단계 (0부터)")
 # [LLM 교체] 모델을 코드가 아니라 .env 설정값으로 정한다 (코드에 기본 모델을 두지 않음, .env.example 참고)
 # - LLM_PROVIDER: LangChain 공급자 이름 (google_genai, ollama, anthropic 등)
 #   google_genai 외의 공급자는 해당 패키지(langchain-ollama, langchain-anthropic 등)와 API 키가 필요하다
@@ -47,22 +50,30 @@ trimmer = trim_messages(
     start_on="human",
 )
 
-class RouterOutput(BaseModel):
-    """라우터가 분류해야 할 목적지 정의"""
-    destination: Literal["character_agent", "market_agent", "guide_agent", "general_agent"] = Field(
+class PlanStep(BaseModel):
+    """작업 계획의 한 단계: 어느 에이전트가 무엇을 할지"""
+    agent: Literal["character_agent", "market_agent", "guide_agent", "general_agent"] = Field(
         description=
-            "질문 유형에 따른 전송 경로: "
+            "이 단계를 맡을 에이전트: "
             "1. character_agent: 특정 캐릭터의 기본 프로필(서버, 직업, 전투 레벨, 아이템 레벨, 전투력, 길드) 조회 관련 "
             "2. market_agent: 경매장, 시세, 가격, 아이템 구매/판매, 재료 시세 조회 관련 "
-            "3. guide_agent: 레이드 공략, 군단장/어비스 던전 패턴, 보스 공략법, 게임 가이드, 게임 정보 및 육성법 지식 검색 관련 "
+            "3. guide_agent: 레이드 공략, 군단장/어비스 던전 패턴, 보스 공략법, 입장 레벨, 게임 가이드, 게임 정보 및 육성법 지식 검색 관련 "
             "4. general_agent: 단순 인사, 일반적인 잡담 및 위 카테고리에 속하지 않는 질문"
     )
+    task: str = Field(description="이 에이전트가 맡을 일. 캐릭터명·아이템명·레이드명은 사용자가 쓴 그대로 넣을 것")
+
+
+class RouterOutput(BaseModel):
+    """라우터가 세우는 작업 계획 (대부분 1단계, 두 영역이 모두 필요할 때만 2단계)"""
+    steps: list[PlanStep] = Field(description="실행할 단계 목록 (1~2개, 순서대로 실행되고 마지막 단계가 최종 답변을 씀)")
 
 router_llm = llm.with_structured_output(RouterOutput)
 # 라우터 분류 시도 횟수 (첫 시도 + 재시도 1회)
 ROUTER_MAX_ATTEMPTS = 2
 # 분류에 끝내 실패했을 때 보낼 기본 경로
 ROUTER_FALLBACK = "general_agent"
+# 한 턴에 실행할 최대 단계 수 (LLM 호출 수와 recursion_limit을 고려해 2로 제한)
+MAX_PLAN_STEPS = 2
 router_system = SystemMessage(content=
     """너는 로스트아크 AI 비서의 라우터야. 사용자의 질문을 분석해 적절한 에이전트를 지정해.
     [분류 기준 및 예시]
@@ -75,7 +86,30 @@ router_system = SystemMessage(content=
         - 레이드 공략, 관문·패턴·기믹, 게임 가이드
     4. general_agent (일반):
         - 인사, 잡담, 위 카테고리에 속하지 않는 질문
+    [작업 계획 규칙]
+    - 대부분의 질문은 에이전트 하나로 답한다. steps에는 1개만 넣어라.
+    - 한 질문 안에 서로 다른 에이전트의 정보가 모두 필요할 때만 2개를 넣어라. 최대 2개다.
+    - 같은 에이전트가 답할 수 있는 대상이 여러 개(아이템 여러 개, 레이드 여러 개 등)여도 1개로 처리한다.
+    - 한 단계의 결과가 있어야 다른 단계가 답할 수 있으면, 정보를 먼저 찾는 단계를 앞에 둔다. 마지막 단계가 최종 답변을 쓴다.
+    - 레이드 입장 레벨·입장 조건은 guide_agent가 공략 문서에서 찾는다.
     """)
+
+
+def plan_from(result) -> list:
+    """라우터 출력을 실행할 계획으로 정리한다: 같은 에이전트는 한 번만, 최대 MAX_PLAN_STEPS개"""
+    plan, seen = [], set()
+    for step in result.steps:
+        if step.agent not in seen:
+            seen.add(step.agent)
+            plan.append({"agent": step.agent, "task": step.task})
+    kept, dropped = plan[:MAX_PLAN_STEPS], plan[MAX_PLAN_STEPS:]
+    if dropped:
+        # 잘린 부분을 조용히 빠뜨리거나 지어내지 않도록, 마지막 단계에게 따로 물어봐 달라고 안내하게 한다
+        dropped_text = "; ".join(s["task"] for s in dropped)
+        print(f"✂️ [Plan Truncated] 최대 {MAX_PLAN_STEPS}단계를 넘어 제외: {dropped_text}")
+        kept[-1] = {**kept[-1], "task": kept[-1]["task"] +
+                    f" (이번에 처리하지 못하는 부분: {dropped_text} → 이 부분은 조회하거나 지어내지 말고, 따로 다시 물어봐 달라고 안내할 것)"}
+    return kept
 
 def router(state: AgentState):
     """
@@ -89,14 +123,16 @@ def router(state: AgentState):
     if messages:
         print(f"💬 [Latest Message] 마지막 입력: {messages[-1].content}")
     
-    destination = None
+    plan = None
     for attempt in range(1, ROUTER_MAX_ATTEMPTS + 1):
         try:
             result = router_llm.invoke([router_system] + messages)
             # 응답이 비었거나 스키마에 맞는 값을 못 받은 경우도 실패로 본다
             if result is None:
                 raise ValueError("구조화 출력이 비어 있음 (result=None)")
-            destination = result.destination
+            plan = plan_from(result)
+            if not plan:
+                raise ValueError("작업 계획이 비어 있음 (steps=[])")
             break
         except ModelError as e:
             # LLM 호출 자체의 실패(429, 인증 오류, 서버 장애 등)는 SDK가 이미 재시도했고,
@@ -107,18 +143,72 @@ def router(state: AgentState):
             print(f"⚠️ [Router Error] 분류 실패 ({attempt}/{ROUTER_MAX_ATTEMPTS}회차) - {type(e).__name__}: {e}")
 
     # 재시도까지 실패하면 서비스를 멈추지 않고 일반 대화 에이전트로 보낸다
-    if destination is None:
-        destination = ROUTER_FALLBACK
-        print(f"🛟 [Router Fallback] 분류에 실패해 기본 경로로 보냅니다 ➡️ {destination}")
+    if not plan:  # None(예외) 또는 빈 계획
+        plan = [{"agent": ROUTER_FALLBACK, "task": ""}]
+        print(f"🛟 [Router Fallback] 분류에 실패해 기본 경로로 보냅니다 ➡️ {ROUTER_FALLBACK}")
 
-    print(f"🎯 [Router Decision] 선택된 다음 경로 ➡️ {destination}")
+    destination = plan[0]["agent"]
+    print(f"🎯 [Router Decision] 작업 계획 ➡️ {' → '.join(s['agent'] for s in plan)}")
     print("-" * 50)
-    
-    return {"next_node": destination}
+
+    return {"next_node": destination, "plan": plan, "step": 0}
 
 def route_decision(state: AgentState):
     """라우터가 선택한 다음 노드 이름을 리턴하는 조건부 엣지 함수"""
     return state.get("next_node", "general_agent")
+
+
+def system_with_task(system: SystemMessage, state: AgentState) -> SystemMessage:
+    """계획이 2단계 이상이면 시스템 프롬프트 뒤에 이번 단계에서 할 일을 붙인다 (대화 기록에는 저장하지 않음)
+    Gemini는 시스템 메시지를 여러 개 받지 못할 수 있어 하나로 합친다"""
+    plan, step = state.get("plan", []), state.get("step", 0)
+    if len(plan) < 2 or step >= len(plan):
+        return system
+    steps_text = "\n".join(f"        {i + 1}단계 {s['agent']}: {s['task']}" for i, s in enumerate(plan))
+    if step < len(plan) - 1:
+        role = "다음 단계 에이전트가 이어서 최종 답변을 쓰므로, 너는 네 담당 부분만 툴로 확인해 결과를 간단히 정리해라."
+    else:
+        role = ("대화에 있는 앞 단계 에이전트의 답변과 네가 확인한 내용을 합쳐, 사용자 질문 전체에 대한 최종 답변을 써라. "
+                "네 담당이 아닌 부분은 앞 단계 결과를 그대로 활용하고, 다시 조회하지 마라.")
+    return SystemMessage(content=system.content + f"""
+    [이번 질문의 작업 계획]
+    이 질문은 여러 에이전트가 순서대로 나눠 처리한다.
+{steps_text}
+    너는 {step + 1}단계 담당이다: {plan[step]['task']}
+    {role}
+    """)
+
+
+def agent_input(system: SystemMessage, state: AgentState, messages: list) -> list:
+    """에이전트 LLM에 넣을 메시지 목록을 만든다.
+    2단계 이상 계획에서 앞 단계 답변(AI 메시지)으로 대화가 끝나 있으면, LLM이 그 답변을 이어 쓰기만 하고
+    자기 단계의 툴을 부르지 않는 문제가 있어(측정 중 확인), 이번 단계 지시를 사용자 메시지로 덧붙인다 (대화 기록에는 저장하지 않음)"""
+    full = [system_with_task(system, state)] + messages
+    plan, step = state.get("plan", []), state.get("step", 0)
+    last = messages[-1] if messages else None
+    if len(plan) >= 2 and 0 < step < len(plan) and last is not None and last.type == "ai" and not last.tool_calls:
+        full.append(HumanMessage(content=f"[작업 계획 {step + 1}단계] {plan[step]['task']}"))
+    return full
+
+
+def finish_step(state: AgentState, response) -> dict:
+    """에이전트 응답을 상태에 반영한다. 툴 호출 없이 답을 냈으면 이 단계가 끝난 것이므로 다음 단계로 넘긴다"""
+    if response.tool_calls:
+        return {"messages": [response]}
+    return {"messages": [response], "step": state.get("step", 0) + 1}
+
+
+def after_agent(tools_node: str):
+    """에이전트 다음 경로: 툴 호출이 있으면 툴 노드, 계획이 남았으면 다음 에이전트, 아니면 종료"""
+    def decide(state: AgentState):
+        if tools_node and tools_condition(state) == "tools":
+            return tools_node
+        plan, step = state.get("plan", []), state.get("step", 0)
+        if step < len(plan):
+            print(f"➡️ [Plan Next] {step + 1}단계로 이동 ➡️ {plan[step]['agent']}")
+            return plan[step]["agent"]
+        return END
+    return decide
 
 
 # --- [1] 마켓 전문 에이전트 ---
@@ -144,13 +234,13 @@ def market_agent(state: AgentState):
     for idx, msg in enumerate(messages):
         print(f"   [{idx}] {msg.type}: {msg.content}")
 
-    full_messages = [market_system] + messages
+    full_messages = agent_input(market_system, state, messages)
     response = market_llm.invoke(full_messages)
     
     print(f"🤖 [Market Agent Response] 생성된 답변/툴호출: {response.content} (Tool Calls: {response.tool_calls})")
     print("-" * 50)
     
-    return {"messages": [response]}
+    return finish_step(state, response)
 
 
 # --- [2] 캐릭터 전문 에이전트 ---
@@ -174,14 +264,14 @@ def character_agent(state: AgentState):
     for idx, msg in enumerate(messages):
         print(f"   [{idx}] {msg.type}: {msg.content}")
 
-    full_messages = [character_system] + messages
+    full_messages = agent_input(character_system, state, messages)
     response = character_llm.invoke(full_messages)
     
     print(f"🤖 [Character Agent Response] 생성된 답변/툴호출: {response.content} (Tool Calls: {response.tool_calls})")
     print("response.usage_metadata : ", response.usage_metadata)
     print("-" * 50)
     
-    return {"messages": [response]}
+    return finish_step(state, response)
 
 
 # --- [3] 가이드 에이전트 ---
@@ -210,13 +300,13 @@ def guide_agent(state: AgentState):
     for idx, msg in enumerate(messages):
         print(f"   [{idx}] {msg.type}: {msg.content}")
 
-    full_messages = [guide_system] + messages
+    full_messages = agent_input(guide_system, state, messages)
     response = guide_llm.invoke(full_messages)
     
     print(f"🤖 [Guide Agent Response] 생성된 답변/툴호출: {response.content} (Tool Calls: {response.tool_calls})")
     print("-" * 50)
 
-    return {"messages": [response]}
+    return finish_step(state, response)
 
 # --- [4] 일반 에이전트 ---
 general_system = SystemMessage(content="너는 로스트아크 친절한 AI 비서야. 일반적인 질문에 답변해 줘.")
@@ -230,14 +320,14 @@ def general_agent(state: AgentState):
     for idx, msg in enumerate(messages):
         print(f"   [{idx}] {msg.type}: {msg.content}")
 
-    full_messages = [general_system] + messages
+    full_messages = agent_input(general_system, state, messages)
     # 💡 general_llm 대신 기본 llm을 사용하도록 수정
     response = llm.invoke(full_messages)
     
     print(f"🤖 [General Agent Response] 생성된 답변: {response.content}")
     print("-" * 50)
     
-    return {"messages": [response]}
+    return finish_step(state, response)
 
 
 
@@ -266,37 +356,16 @@ workflow.add_conditional_edges(
     }
 )
 
-workflow.add_conditional_edges(
-    "market_agent",
-    tools_condition,
-    {
-        "tools": "market_tools",
-        END: END
-    }
-)
-workflow.add_edge("market_tools", "market_agent")
-
-workflow.add_conditional_edges(
-    "character_agent",
-    tools_condition,
-    {
-        "tools": "character_tools",
-        END: END
-    }
-)
-workflow.add_edge("character_tools", "character_agent")
-
-workflow.add_conditional_edges(
-    "guide_agent",
-    tools_condition,
-    {
-        "tools": "guide_tools",
-        END: END
-    }
-)
-workflow.add_edge("guide_tools", "guide_agent")
-
-workflow.add_edge("general_agent", END)
+# [Planner] 에이전트가 답을 내면 바로 끝내지 않고, 계획에 다음 단계가 남았으면 그 에이전트로 보낸다
+AGENT_NODES = ["market_agent", "character_agent", "guide_agent", "general_agent"]
+for agent_name, tools_node in [("market_agent", "market_tools"), ("character_agent", "character_tools"),
+                               ("guide_agent", "guide_tools"), ("general_agent", None)]:
+    paths = {name: name for name in AGENT_NODES if name != agent_name}
+    paths[END] = END
+    if tools_node:
+        paths[tools_node] = tools_node
+        workflow.add_edge(tools_node, agent_name)
+    workflow.add_conditional_edges(agent_name, after_agent(tools_node), paths)
 
 # [대화 기록 영구 저장] MemorySaver(메모리) 대신 SQLite 파일에 저장해 서버를 다시 시작해도 대화가 남게 한다
 CHECKPOINT_DB_PATH = os.getenv("CHECKPOINT_DB_PATH")

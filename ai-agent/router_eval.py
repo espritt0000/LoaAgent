@@ -14,7 +14,7 @@ import sys
 import time
 from collections import defaultdict
 from langchain_core.messages import HumanMessage, AIMessage
-from agent.agent import router_llm, router_system
+from agent.agent import router_llm, router_system, plan_from
 
 # (질문, 기대 경로) — 캐릭터명은 가상의 닉네임
 TEST_CASES = [
@@ -107,9 +107,11 @@ MULTITURN_CASES = [
 
 
 def classify(messages):
-    """라우터 LLM으로 분류하고, 실패하면 ERROR(예외 이름)를 돌려준다"""
+    """라우터 LLM의 작업 계획을 에이전트 이름으로 돌려준다 (2단계면 "a+b"). 실패하면 ERROR(예외 이름)
+    단일 영역 질문은 계획이 1단계여야 정답이므로, 불필요하게 2단계로 나누면 틀린 것으로 센다"""
     try:
-        return router_llm.invoke([router_system] + messages).destination
+        plan = plan_from(router_llm.invoke([router_system] + messages))
+        return "+".join(step["agent"] for step in plan) or "ERROR(빈 계획)"
     except Exception as e:
         return f"ERROR({type(e).__name__})"
 
@@ -174,21 +176,20 @@ COMPOUND_CASES = [
 
 
 def run_compound_eval():
-    """현재 라우터(에이전트 하나만 선택)가 섞인 질문에서 어느 에이전트를 고르는지 기록한다.
-    필요한 에이전트가 둘인 질문은 현재 구조로는 하나만 실행되므로, 고른 쪽이 필요한 에이전트 중 하나인지(반쪽)만 센다"""
+    """라우터의 작업 계획이 필요한 에이전트와 같은지 센다 (순서는 보지 않음: 마지막 단계가 앞 결과를 합쳐 답하므로)
+    Planner 이전 구조(에이전트 하나만 선택)의 기준선: 섞인 질문 9건 모두 둘 중 하나만 고름 (2026-11-19, 문서 7.5)"""
     stats = defaultdict(lambda: {"total": 0, "hit": 0})
     for question, expected, case_type in COMPOUND_CASES:
         actual = classify([HumanMessage(content=question)])
         time.sleep(0.5)  # 요청 속도 제한 대비
+        hit = set(actual.split("+")) == set(expected)
         stats[case_type]["total"] += 1
-        stats[case_type]["hit"] += actual in expected
-        mark = "O" if actual in expected else "X"
-        print(f"[{mark}] ({case_type}) {question} -> {actual} (필요: {' + '.join(expected)})")
+        stats[case_type]["hit"] += hit
+        print(f"[{'O' if hit else 'X'}] ({case_type}) {question} -> {actual} (필요: {' + '.join(expected)})")
 
     print("\n=== 섞인 질문 결과 ===")
     print(f"측정일: {time.strftime('%Y-%m-%d')}")
-    print("의존·독립: 고른 에이전트가 필요한 둘 중 하나인 수 (현재 구조는 하나만 실행 → 반쪽 답) / 전체")
-    print("함정: 고른 에이전트가 정답인 수 / 전체")
+    print("유형: 계획이 필요한 에이전트와 같은 수 / 전체 (함정은 1단계여야 정답)")
     for case_type in ["의존", "독립", "함정"]:
         s = stats[case_type]
         print(f"{case_type}: {s['hit']} / {s['total']}")
@@ -247,11 +248,7 @@ def main():
     wrong = []
 
     for question, expected in TEST_CASES:
-        try:
-            result = router_llm.invoke([router_system, HumanMessage(content=question)])
-            actual = result.destination
-        except Exception as e:  # 구조화 출력 파싱 실패 등
-            actual = f"ERROR({type(e).__name__})"
+        actual = classify([HumanMessage(content=question)])  # 실패하면 ERROR(...)
         total[expected] += 1
         if actual == expected:
             correct[expected] += 1

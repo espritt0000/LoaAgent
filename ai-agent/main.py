@@ -149,7 +149,12 @@ def history_endpoint(thread_id: str):
         else:
             continue  # 툴 호출 요청과 툴 결과는 화면에 보여 주지 않는다
         text = to_text(msg.content)
-        if text:
+        if not text:
+            continue
+        # 두 단계로 처리한 질문은 AI 답변이 단계마다 남는다. 채팅 화면처럼 마지막(최종) 답변만 보여 준다
+        if role == "ai" and messages and messages[-1].role == "ai":
+            messages[-1] = HistoryMessage(role=role, content=text)
+        else:
             messages.append(HistoryMessage(role=role, content=text))
     print(f"📜 [History] thread_id={thread_id}, 메시지 {len(messages)}개 중 최근 {min(len(messages), HISTORY_LIMIT)}개 반환")
     return HistoryResponse(messages=messages[-HISTORY_LIMIT:])

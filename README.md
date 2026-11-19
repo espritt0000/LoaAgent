@@ -10,7 +10,7 @@ LangGraph 기반 멀티 에이전트로 **경매장 시세 조회 · 캐릭터 �
 
 | 에이전트 | 하는 일 | 사용 Tool |
 | --- | --- | --- |
-| Router | 질문 의도를 4개 경로 중 하나로 분류 (Structured Output). 분류 실패 시 1회 재시도 후 General Agent로 폴백 | – |
+| Router | 질문을 1~2단계 작업 계획(에이전트 + 할 일)으로 나눔 (Structured Output). 대부분 1단계, 두 영역이 필요하면 2단계로 순서대로 실행. 분류 실패 시 1회 재시도 후 General Agent로 폴백 | – |
 | Market Agent | 경매장 아이템의 전일 평균가·최근 거래가 조회 | `get_market_options` → `search_market_items` |
 | Character Agent | 캐릭터 기본 프로필(서버, 직업, 레벨, 전투력, 길드) 조회 | `get_character_profile` |
 | Guide Agent | 레이드 공략 문서 RAG 검색, 정보가 부족하면 재검색 | `search_game_guide` |
@@ -31,6 +31,7 @@ LangGraph 기반 멀티 에이전트로 **경매장 시세 조회 · 캐릭터 �
 
 | 항목 | 내용 | 설계 문서 |
 | --- | --- | --- |
+| 작업 계획(Planner) | 라우터가 1~2단계 계획을 세우고 에이전트를 순서대로 실행, 마지막 단계가 앞 결과를 합쳐 최종 답변 | 5.2 |
 | 라우터 실패 대응 | 분류 실패 시 1회 재시도 → General Agent 폴백. LLM 호출 자체가 실패하면(429·인증·서버 장애) 재시도 없이 중단 | 5.2 |
 | LLM 오류 안내 | LangChain 공통 예외로 429(분당/하루 한도 구분)·인증·서버 장애를 나눠 안내, 실패한 턴은 대화 기록에서 제거 | 4.2 |
 | 대화 기록 | `SqliteSaver`로 영구 저장, `thread_id`는 Spring이 로그인 계정으로 결정, 새로고침 시 복원, '새 대화' 버튼 | 4.1, 4.2 |
@@ -64,6 +65,7 @@ LoaAgent/
 │  ├─ compound_eval.py        # 두 영역이 섞인 질문 실제 답변 확인 (그래프 전체 실행, 6문항)
 │  ├─ rag_eval.py             # RAG 검색 평가 (검색어 55개 + 문서 없는 검색어 10개)
 │  ├─ test_router_fallback.py # 라우터 재시도·폴백 단위 테스트 (Mock, API 호출 없음)
+│  ├─ test_planner.py         # 작업 계획(Planner) 실행 순서·단계 지시 단위 테스트 (Mock, API 호출 없음)
 │  ├─ test_llm_error_messages.py # LLM 오류 종류별 안내 문구 테스트 (Mock, API 호출 없음)
 │  ├─ test_chat_history.py    # 대화 기록 영구 저장·/history 테스트 (Mock + 임시 SQLite)
 │  └─ test_api_key.py         # FastAPI 내부 호출용 API Key 테스트 (TestClient)
@@ -130,7 +132,8 @@ FastAPI 호출 제한 시간은 `application.properties`의 `fastapi.*`(연결 3
 | k=1 규칙 삭제 (검색어 26개, 청크 6개) | 동적 k 적중 21/26 → 24/26 | `python rag_eval.py` | 7.4 |
 | 검색어 레이드 이름 유지 규칙 (8문항 × 3회, 3.1) | 이름 유지 9/24 → 17/24 | – | 7.4 |
 | 문서에 없는 레이드·보스 거절 | 거절 10/10, 정상 검색어 통과 46/55 | `python rag_eval.py` | 7.4 |
-| 두 영역이 섞인 질문 (현재 구조 기준선, 3.1) | 두 영역 모두 답한 질문 0/5 (에이전트 하나만 실행) | `python compound_eval.py` | 7.5 |
+| 두 영역이 섞인 질문 - 라우터 계획 (12건, 3.1) | 섞인 질문 9건: 변경 전 모두 둘 중 하나만 → 변경 후 9/9 두 에이전트, 함정 3/3 | `python router_eval.py compound` | 7.5 |
+| 두 영역이 섞인 질문 - 실제 답변 (5문항 × 3회, 3.1) | 두 영역 모두 답함: 변경 전 0/5 → 변경 후 11/15 (실패 4건 중 2건은 검색 문제, 1건은 Gemini 503) | `python compound_eval.py` | 7.5 |
 
 `router_eval.py`는 서비스와 같은 `LLM_MODEL` 설정을 쓰므로 실행할 때 값만 바꾸면 모델별로 비교할 수 있습니다(Git Bash 예: `LLM_MODEL=gemini-3.1-flash-lite python router_eval.py`). 다른 공급자 모델과의 비교는 아직 하지 않았습니다.
 
@@ -140,7 +143,7 @@ FastAPI 호출 제한 시간은 `application.properties`의 `fastapi.*`(연결 3
 
 ```bash
 cd ai-agent
-python -m unittest test_router_fallback test_llm_error_messages test_chat_history test_api_key -v
+python -m unittest test_router_fallback test_planner test_llm_error_messages test_chat_history test_api_key -v
 ```
 
 ```bash
@@ -151,6 +154,7 @@ cd backend/loaagent
 | 테스트 | 확인 내용 |
 | --- | --- |
 | `test_router_fallback` | 라우터 재시도·폴백, LLM 호출 오류 시 중단 |
+| `test_planner` | 2단계 계획을 순서대로 실행, 1단계는 기존과 동일, 최대 2단계(넘으면 안내), 빈 계획 폴백 |
 | `test_llm_error_messages` | 429·인증·서버 오류·기타 예외별 안내 문구 |
 | `test_chat_history` | 재연결 후 대화 유지, 계정별 저장, `/history` 최근 50개, 새 대화(삭제) |
 | `test_api_key` | 키 없음·틀린 키 401, 맞는 키 통과 |
@@ -163,7 +167,7 @@ cd backend/loaagent
 
 주요 항목만 적었습니다. 전체 목록과 원인은 설계 문서 8장에 있습니다.
 
-- 한 턴에 에이전트 하나만 실행 → 공략과 시세가 모두 필요한 질문에는 반쪽 답만 가능 (에이전트 간 협업 검토 중)
+- 작업 계획은 최대 2단계라 세 영역이 모두 필요한 질문은 일부만 답하고 나머지는 다시 물어보도록 안내함. 계획은 처음에 한 번 세우고 중간에 바꾸지 않아, 1단계가 실패하면(예: 캐릭터명에 조사가 붙어 조회 실패) 2단계에서 바로잡지 못함
 - "카멘 4관문"처럼 문서에 있는 이름을 다른 맥락으로 물으면 엉뚱한 문서를 근거로 답할 수 있음 (관문 번호 확인 검토)
 - Guide Agent가 검색어의 레이드 이름을 바꾸는 문제는 프롬프트 규칙으로 줄였지만 남아 있음
 - 벡터 검색만 사용 (하이브리드 검색·리랭커 검토)

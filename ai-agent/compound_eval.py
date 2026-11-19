@@ -92,7 +92,10 @@ def run_case(question):
                 tool_results["get_character_profile"] = ast.literal_eval(to_text(msg.content))
             except (ValueError, SyntaxError):
                 tool_results["get_character_profile"] = json.loads(to_text(msg.content))
-    return result.get("next_node"), tool_calls, tool_results, to_text(messages[-1].content)
+    # 라우터 경로: 작업 계획이 있으면 단계 순서대로, 없으면(Planner 이전 구조) 고른 에이전트 하나
+    plan = result.get("plan") or []
+    route = " → ".join(step["agent"] for step in plan) if plan else result.get("next_node")
+    return route, tool_calls, tool_results, to_text(messages[-1].content)
 
 
 def main():

@@ -111,7 +111,7 @@ class FailedTurnCleanupTest(unittest.TestCase):
         return [m.content for m in self.graph.get_state({"configurable": {"thread_id": "t-cleanup"}}).values.get("messages", [])]
 
     def test_429로_실패한_질문은_기록에서_빠진다(self):
-        to_general = SimpleNamespace(destination="general_agent")
+        to_general = SimpleNamespace(steps=[SimpleNamespace(agent="general_agent", task="")])
         self.ask("첫 질문", router_result=to_general)
         self.ask("실패 질문", router_error=GoogleRateLimitError("429 RESOURCE_EXHAUSTED"))
         self.assertEqual(self.stored(), ["첫 질문", "답변"])
@@ -121,7 +121,7 @@ class FailedTurnCleanupTest(unittest.TestCase):
 
     def test_라우터_이후_에이전트에서_실패해도_그_턴이_통째로_빠진다(self):
         self.general.invoke.side_effect = ModelAPIError("503 UNAVAILABLE")
-        reply = self.ask("질문", router_result=SimpleNamespace(destination="general_agent"))
+        reply = self.ask("질문", router_result=SimpleNamespace(steps=[SimpleNamespace(agent="general_agent", task="")]))
         self.assertEqual(reply, "AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요.")
         self.assertEqual(self.stored(), [])
 

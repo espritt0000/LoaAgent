@@ -12,7 +12,12 @@ from langchain_core.messages import HumanMessage
 from langchain_google_genai.chat_models import GoogleRateLimitError
 
 import agent.agent as agent_module
-from agent.agent import router, RouterOutput
+from agent.agent import router, RouterOutput, PlanStep
+
+
+def plan_of(*agents):
+    """라우터 LLM이 돌려줄 작업 계획 (Planner 이후 RouterOutput은 단계 목록)"""
+    return RouterOutput(steps=[PlanStep(agent=a, task=f"{a} 담당") for a in agents])
 
 
 def make_state(text="세르카 1관문 기믹 알려줘"):
@@ -35,14 +40,14 @@ class RouterFallbackTest(unittest.TestCase):
         return result, mock_llm.invoke.call_count
 
     def test_정상_분류(self):
-        result, calls = self.run_router_with([RouterOutput(destination="guide_agent")])
+        result, calls = self.run_router_with([plan_of("guide_agent")])
         self.assertEqual(result["next_node"], "guide_agent")
         self.assertEqual(calls, 1)
 
     def test_첫_시도_예외_후_재시도_성공(self):
         result, calls = self.run_router_with([
             RuntimeError("일시적 API 오류"),
-            RouterOutput(destination="market_agent"),
+            plan_of("market_agent"),
         ])
         self.assertEqual(result["next_node"], "market_agent")
         self.assertEqual(calls, 2)
