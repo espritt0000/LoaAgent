@@ -68,7 +68,8 @@ LoaAgent/
 │  ├─ test_planner.py         # 작업 계획(Planner) 실행 순서·단계 지시 단위 테스트 (Mock, API 호출 없음)
 │  ├─ test_llm_error_messages.py # LLM 오류 종류별 안내 문구 테스트 (Mock, API 호출 없음)
 │  ├─ test_chat_history.py    # 대화 기록 영구 저장·/history 테스트 (Mock + 임시 SQLite)
-│  └─ test_api_key.py         # FastAPI 내부 호출용 API Key 테스트 (TestClient)
+│  ├─ test_api_key.py         # FastAPI 내부 호출용 API Key 테스트 (TestClient)
+│  └─ test_character_name.py  # 캐릭터명 조사 처리 테스트 (Mock, API 호출 없음)
 └─ backend/loaagent/          # Spring Boot (인증·세션·화면)
 ```
 
@@ -144,7 +145,7 @@ FastAPI 호출 제한 시간은 `application.properties`의 `fastapi.*`(연결 3
 
 ```bash
 cd ai-agent
-python -m unittest test_router_fallback test_planner test_llm_error_messages test_chat_history test_api_key -v
+python -m unittest test_router_fallback test_planner test_llm_error_messages test_chat_history test_api_key test_character_name -v
 ```
 
 ```bash
@@ -159,6 +160,7 @@ cd backend/loaagent
 | `test_llm_error_messages` | 429·인증·서버 오류·기타 예외별 안내 문구 |
 | `test_chat_history` | 재연결 후 대화 유지, 계정별 저장, `/history` 최근 50개, 새 대화(삭제) |
 | `test_api_key` | 키 없음·틀린 키 401, 맞는 키 통과 |
+| `test_character_name` | 조사가 붙은 캐릭터명은 조사를 떼고 다시 조회, "하늘로"처럼 조사로 끝나는 진짜 닉네임은 그대로, 둘 다 없으면 시도한 이름 안내 |
 | `ChatApiControllerTimeoutTest` | 정상 200, 응답 지연 504, 서버 꺼짐 503, 500 응답 502 |
 | `ChatHistoryApiTest` | 브라우저가 보낸 `thread_id` 대신 로그인 계정 값 사용, 조회·삭제 실패 시 502 |
 | `CsrfProtectionTest` | 토큰 없는 요청 403, `<meta>` 토큰 헤더로 통과 |
@@ -168,7 +170,7 @@ cd backend/loaagent
 
 주요 항목만 적었습니다. 전체 목록과 원인은 설계 문서 8장에 있습니다.
 
-- 작업 계획은 최대 2단계라 세 영역이 모두 필요한 질문은 일부만 답하고 나머지는 다시 물어보도록 안내함. 계획은 처음에 한 번 세우고 중간에 바꾸지 않아, 1단계가 실패하면(예: 캐릭터명에 조사가 붙어 조회 실패) 2단계에서 바로잡지 못함
+- 작업 계획은 최대 2단계라 세 영역이 모두 필요한 질문은 일부만 답하고 나머지는 다시 물어보도록 안내함. 계획은 처음에 한 번 세우고 중간에 바꾸지 않아, 1단계가 실패하면 2단계에서 바로잡지 못함 (캐릭터명에 조사가 붙어 조회에 실패하던 경우는 캐릭터 툴이 조사를 떼고 다시 조회하도록 보완)
 - "카멘 4관문"처럼 문서에 있는 이름을 다른 맥락으로 물으면 엉뚱한 문서를 근거로 답할 수 있음 (관문 번호 확인 검토)
 - Guide Agent가 검색어의 레이드 이름을 바꾸는 문제는 프롬프트 규칙으로 줄였지만 남아 있음
 - 벡터 검색만 사용 (하이브리드 검색·리랭커 검토)
