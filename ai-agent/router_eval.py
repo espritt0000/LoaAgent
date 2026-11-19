@@ -7,6 +7,7 @@
 - 멀티턴: python router_eval.py multiturn    (28건 x 2회(맥락 있음/없음) = 호출 56회)
 - 어려운 멀티턴: python router_eval.py hard  (17건 x 2회 = 호출 34회)
 - 라우터 LLM만 호출합니다. Stove API·Chroma는 호출하지 않습니다.
+- 모델 바꿔서 측정: .env의 LLM_MODEL을 바꾸거나 실행할 때 지정 (Git Bash 예: LLM_MODEL=gemini-3.1-flash-lite python router_eval.py)
 """
 import sys
 import time

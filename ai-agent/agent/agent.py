@@ -5,7 +5,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import SystemMessage, trim_messages
 from langchain_core.exceptions import ModelError
 from pydantic import BaseModel, Field
-from langchain_google_genai import ChatGoogleGenerativeAI
+import os
+from langchain.chat_models import init_chat_model
 from dotenv import load_dotenv
 
 
@@ -23,10 +24,14 @@ class AgentState(MessagesState):
     - next_node: 라우터가 다음에 실행해야 한다고 판단한 전문 에이전트 노드 이름
     """
     next_node: str = Field(default="", description="다음에 실행할 node 이름")
-llm = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash-lite",
-    # temperature=0
-)
+# [LLM 교체] 모델을 코드가 아니라 .env 설정값으로 정한다 (값이 없으면 서비스 기본 모델)
+# - LLM_PROVIDER: LangChain 공급자 이름 (google_genai, ollama, anthropic 등)
+#   google_genai 외의 공급자는 해당 패키지(langchain-ollama, langchain-anthropic 등)와 API 키가 필요하다
+# - LLM_MODEL: 공급자의 모델 이름
+LLM_PROVIDER = os.getenv("LLM_PROVIDER") or "google_genai"
+LLM_MODEL = os.getenv("LLM_MODEL") or "gemini-3.5-flash-lite"
+print(f"🤖 [LLM CONFIG] provider={LLM_PROVIDER}, model={LLM_MODEL}")
+llm = init_chat_model(LLM_MODEL, model_provider=LLM_PROVIDER)
 
 # 토큰 트림 설정
 trimmer = trim_messages(

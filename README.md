@@ -31,7 +31,7 @@ Spring Boot → FastAPI 호출에는 연결 3초, 응답 60초 제한 시간을 
 
 ## 기술 스택
 
-- **AI 서버**: Python, FastAPI, LangGraph, LangChain, Gemini (`gemini-3.5-flash-lite`)
+- **AI 서버**: Python, FastAPI, LangGraph, LangChain, Gemini (`gemini-3.5-flash-lite`, `.env`의 `LLM_PROVIDER`·`LLM_MODEL`로 변경 가능)
 - **RAG**: Chroma, BGE-M3 (Ollama 로컬 실행), MarkdownHeaderTextSplitter
 - **백엔드**: Java 21, Spring Boot, Spring Security, Spring Data JPA, Spring Session JDBC, Thymeleaf
 - **DB**: MySQL
@@ -77,6 +77,8 @@ python utils/DBupdate.py          # 공략 문서를 Chroma에 적재
 uvicorn main:fastapi_app --port 8000
 ```
 
+**LLM 모델 바꾸기**: 모델은 코드가 아니라 `.env`의 `LLM_PROVIDER`(LangChain 공급자 이름, 기본 `google_genai`)와 `LLM_MODEL`(기본 `gemini-3.5-flash-lite`)로 정합니다. LangChain `init_chat_model`로 만들기 때문에 같은 코드로 다른 공급자도 지정할 수 있지만, `google_genai` 외의 공급자는 해당 패키지(예: `langchain-anthropic`)와 API 키가 필요하고 아직 실행해 보지 않았습니다. 패키지가 없으면 서버 시작 시 `ImportError`가 납니다.
+
 ### 2. 백엔드 (backend/loaagent)
 
 1. MySQL에 `loaagent_db` 데이터베이스 생성 (테이블은 실행 시 자동 생성)
@@ -101,6 +103,8 @@ python router_eval.py
 ```
 
 에이전트별 10문항, 총 40문항으로 라우터의 분류 결과를 기대 경로와 비교합니다. (2026-11-17 측정: 40/40, 단일 턴 질문 기준)
+
+평가 스크립트도 서비스와 같은 `LLM_MODEL` 설정을 쓰므로, 실행할 때 값을 바꾸면 모델별로 비교할 수 있습니다(Git Bash 예: `LLM_MODEL=gemini-3.1-flash-lite python router_eval.py`). 2026-11-19에 이 방법으로 `gemini-3.1-flash-lite`를 측정해 40/40이었습니다(1회). 다른 공급자 모델과의 비교는 아직 하지 않았습니다.
 
 ### 멀티턴(후속 질문) 테스트
 
