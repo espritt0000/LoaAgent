@@ -48,7 +48,7 @@ class ChatHistoryApiTest {
         });
         server.start();
         String baseUrl = "http://localhost:" + server.getAddress().getPort();
-        return new ChatApiController(WebClientConfig.createFastapiWebClient(baseUrl, 1000, 5));
+        return new ChatApiController(WebClientConfig.createFastapiWebClient(baseUrl, "test-api-key", 1000, 5));
     }
 
     @Test

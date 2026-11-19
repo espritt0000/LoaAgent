@@ -19,7 +19,7 @@
             <p class="text-slate-400 text-sm">계정에 로그인하여 LoaAgent를 이용하세요.</p>
         </div>
 
-        <form action="/login" method="POST" class="space-y-6">
+        <form th:action="@{/login}" method="POST" class="space-y-6">
             <div th:if="${param.error}" class="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm text-center">
                 아이디 또는 비밀번호가 올바르지 않습니다.
             </div>

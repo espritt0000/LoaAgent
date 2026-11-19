@@ -56,7 +56,7 @@ class ChatApiControllerTimeoutTest {
 
     private ResponseEntity<ChatResponseDto> ask(String baseUrl) {
         ChatApiController controller = new ChatApiController(
-                WebClientConfig.createFastapiWebClient(baseUrl, CONNECT_TIMEOUT_MS, RESPONSE_TIMEOUT_SECONDS));
+                WebClientConfig.createFastapiWebClient(baseUrl, "test-api-key", CONNECT_TIMEOUT_MS, RESPONSE_TIMEOUT_SECONDS));
         return controller.chatResponseDto(new ChatRequestDto(null, "안녕"), () -> "tester");
     }
 
