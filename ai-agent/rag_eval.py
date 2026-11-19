@@ -9,11 +9,12 @@ RAG 검색 평가 스크립트 (Guide Agent의 search_game_guide 검색 품질 �
 측정 방법
 - 검색어마다 정답 청크(문서 파일 + 섹션)를 미리 정해 두고, 전체 청크를 유사도 순으로 정렬해 정답이 몇 등인지 확인합니다.
 - Hit@k: 정답이 상위 k개 안에 들어온 검색어 비율
-- 동적 k 적중: 실제 서비스처럼 decide_k(검색어)로 정한 k개 안에 정답이 들어왔는지
+- 동적 k 적중: 전체 청크에서 decide_k(검색어)로 정한 k개 안에 정답이 들어왔는지 (관문 필터 이전 서비스 방식)
+- 서비스 검색 적중: 실제 서비스 검색 함수 retrieve()(이름 확인 + 레이드·관문 필터)가 돌려준 청크에 정답이 있는지
 - MRR: 1 / (정답 순위)의 평균 (1등이면 1.0, 2등이면 0.5)
 - 검색어는 Guide Agent의 LLM이 Tool을 호출할 때 만들 법한 형태로 직접 작성했습니다.
 """
-from tools.guide import vector_store, decide_k, find_known_name, KNOWN_NAMES
+from tools.guide import vector_store, decide_k, find_raid, retrieve, TITLE_NAMES, BOSS_NAMES
 
 SERKA = "serka.md"
 BELGARDIN = "belgardin.md"
@@ -105,6 +106,29 @@ TEST_CASES = [
 ]
 
 
+# 관문 번호가 있는 검색어 (7-3 관문 필터): 임베딩이 "1관문"과 "2관문"을 구분하지 못해 다른 관문이 1위가 되던 문제
+# 다양한 관문 번호 표현(2관문 / 2 관문 / 이관문 / 두 번째 관문)을 함께 넣음
+GATE_CASES = [
+    ("세르카 2관문 패턴", [(SERKA, SERKA_G2)], "관문"),
+    ("종막 2관문 패턴", [(KAZEROS, KAZ_G2)], "관문"),       # Planner 실제 답변에서 개요만 받아 틀렸던 질문
+    ("최후의 날 1관문 기믹", [(KAZEROS, KAZ_G1)], "관문"),
+    ("벨가르딘 이관문 공략", [(BELGARDIN, BEL_G2)], "관문"),
+    ("칠흑 폭풍의 밤 두 번째 관문 패턴", [(MORDUM, MOR_G2)], "관문"),
+    ("칠흑 3관문 패턴", [(MORDUM, MOR_G3)], "관문"),
+    ("파멸의 성채 첫번째 관문 패턴", [(ARMOCHE, ARM_G1)], "관문"),
+    ("지평의 성당 2 관문 기믹", [(ARSENOS, ARS_G2)], "관문"),
+    ("아르세노스 1관문 패턴", [(ARSENOS, ARS_G1)], "관문"),    # 보스 이름이 1·2관문에 모두 나옴
+    ("나이트레아 2관문 기믹", [(MORDUM, MOR_G2)], "관문"),     # 보스 이름 + 맞는 관문
+]
+
+# 문서에 있는 이름이지만 조건이 맞지 않는 검색어: 비슷한 문서를 주지 않고 안내해야 정답
+MISMATCH_CASES = [
+    ("카멘 4관문 공략", "없는 관문"),
+    ("세르카 3관문 패턴", "없는 관문"),
+    ("카멘 2관문 패턴", "보스·관문 불일치"),        # 카멘은 칠흑 1관문 보스
+    ("에키드나 2관문 기믹", "보스·관문 불일치"),    # 에키드나는 파멸의 성채 1관문 보스
+]
+
 # 공략 문서가 없는 레이드·보스 검색어: 검색하지 않고 '문서 없음'으로 거절해야 정답
 UNKNOWN_CASES = [
     ("발탄 2관문 공략", "문서 없는 실제 레이드"),
@@ -122,15 +146,15 @@ UNKNOWN_CASES = [
 
 def evaluate_name_check():
     """문서에 없는 이름을 거절하는지, 정상 검색어를 잘못 거절하지 않는지 확인한다 (임베딩 호출 없음)"""
-    print(f"\n=== 레이드·보스 이름 확인 평가 (문서에서 자동 추출한 이름 {len(KNOWN_NAMES)}개) ===")
-    rejected = [(q, t) for q, t in UNKNOWN_CASES if find_known_name(q) is None]
+    print(f"\n=== 레이드·보스 이름 확인 평가 (문서에서 자동 추출한 이름: 레이드 제목 {len(TITLE_NAMES)}개, 보스 {len(BOSS_NAMES)}개) ===")
+    rejected = [(q, t) for q, t in UNKNOWN_CASES if find_raid(q) is None]
     print(f"문서 없는 검색어 거절: {len(rejected)}/{len(UNKNOWN_CASES)}")
     for q, t in UNKNOWN_CASES:
-        matched = find_known_name(q)
+        matched = find_raid(q)
         if matched is not None:
-            print(f"  - 거절 못 함 ({t}) {q}: '{matched}'와 일치로 판단")
+            print(f"  - 거절 못 함 ({t}) {q}: '{matched[2]}'와 일치로 판단")
 
-    wrongly = [(q, t) for q, _, t in TEST_CASES if find_known_name(q) is None]
+    wrongly = [(q, t) for q, _, t in TEST_CASES if find_raid(q) is None]
     print(f"정상 검색어 통과: {len(TEST_CASES) - len(wrongly)}/{len(TEST_CASES)}")
     for q, t in wrongly:
         print(f"  - 잘못 거절 ({t}) {q}")
@@ -189,6 +213,33 @@ def main():
             print(f"- ({case_type}) {query}: 정답 {rank}위, k={k}, 1위는 {top1[0]} / {top1[1]}")
 
 
+def evaluate_service():
+    """실제 서비스 검색 함수 retrieve()가 돌려준 청크에 정답이 있는지 확인한다 (이름 확인·레이드·관문 필터 포함)"""
+    print("\n=== 서비스 검색 평가 (retrieve: 이름 확인 + 레이드·관문 필터) ===")
+    by_type = {}
+    for query, answers, case_type in TEST_CASES + GATE_CASES:
+        result = retrieve(query)
+        got = [] if isinstance(result, str) else [chunk_key(doc) for doc in result]
+        hit = any(a in got for a in answers)
+        stat = by_type.setdefault(case_type, [0, 0])
+        stat[0] += hit
+        stat[1] += 1
+        if not hit:
+            print(f"[X] ({case_type}) {query} -> {result if isinstance(result, str) else got}")
+    total = sum(t for _, t in by_type.values())
+    print(f"정답 청크 포함: {sum(h for h, _ in by_type.values())}/{total}")
+    print("유형별: " + ", ".join(f"{t} {h}/{n}" for t, (h, n) in by_type.items()))
+
+    guided = 0
+    for query, case_type in MISMATCH_CASES:
+        result = retrieve(query)
+        guided += isinstance(result, str)
+        print(f"[{'O' if isinstance(result, str) else 'X'}] ({case_type}) {query} -> "
+              f"{result if isinstance(result, str) else [chunk_key(doc) for doc in result]}")
+    print(f"조건 불일치 안내: {guided}/{len(MISMATCH_CASES)}")
+
+
 if __name__ == "__main__":
     main()
     evaluate_name_check()
+    evaluate_service()

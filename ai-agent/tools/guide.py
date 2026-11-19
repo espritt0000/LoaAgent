@@ -31,40 +31,139 @@ except Exception as e:
 NAME_SIMILARITY = 0.6
 
 
-def build_known_names():
-    """적재된 문서의 title과 관문 제목에서 레이드·보스 이름을 뽑는다 (사람이 따로 관리하는 목록 없음)"""
-    names, titles = set(), set()
+def split_names(text: str):
+    """제목·보스 이름을 단어로 나눈다 ("칠흑, 폭풍의 밤" → 칠흑 / 폭풍의, 1자 단어는 제외)"""
+    return [word for word in re.split(r"[\s,&():]+", text) if len(word) >= 2]
+
+
+def build_raid_index():
+    """적재된 청크의 메타데이터로 레이드 표를 만든다 (사람이 따로 관리하는 목록 없음, 문서를 다시 적재할 필요 없음)
+    RAIDS:       {source_file: {"title": 제목, "overview": 개요 섹션명, "gates": {관문 번호: 섹션명}}}
+    TITLE_NAMES: {레이드 제목 단어: source_file}                 예: "세르카" → serka.md
+    BOSS_NAMES:  {보스 이름 단어: [(source_file, 관문 번호), ...]}  예: "카멘" → [(mordum.md, 1)]
+    """
+    raids, title_names, boss_names = {}, {}, {}
     if vector_store is None:
-        return names, titles
+        return raids, title_names, boss_names
     for meta in vector_store.get(include=["metadatas"])["metadatas"]:
-        title = meta.get("title", "")
-        titles.add(title)
-        header = meta.get("Header 2", "")
-        # "1관문: 카멘 & 인페르나스 주요 패턴 및 기믹" → "카멘 & 인페르나스"
-        boss = re.sub(r"^\d+관문:\s*", "", header).replace("주요 패턴 및 기믹", "") if "관문" in header else ""
-        for text in (title, boss):
-            for word in re.split(r"[\s,&():]+", text):
-                if len(word) >= 2:
-                    names.add(word)
-    return names, titles
+        source, title, header = meta.get("source_file", ""), meta.get("title", ""), meta.get("Header 2", "")
+        raid = raids.setdefault(source, {"title": title, "overview": None, "gates": {}})
+        for word in split_names(title):
+            title_names[word] = source
+
+        match = re.match(r"(\d+)관문:\s*(.*)", header)
+        if match:  # "2관문: 태초의 그림자 코르부스 툴 라크 주요 패턴 및 기믹"
+            gate = int(match.group(1))
+            raid["gates"][gate] = header
+            for word in split_names(match.group(2).replace("주요 패턴 및 기믹", "")):
+                boss_names.setdefault(word, []).append((source, gate))
+        else:      # "개요 및 입장 정보"
+            raid["overview"] = header
+
+    # "심연의"처럼 여러 레이드의 보스 이름에 나오는 단어는 어느 레이드인지 정할 수 없어 뺀다
+    ambiguous = [word for word, places in boss_names.items() if len({src for src, _ in places}) > 1]
+    for word in ambiguous:
+        del boss_names[word]
+    if ambiguous:
+        print(f"ℹ️ [Raid Index] 여러 레이드에 걸친 보스 단어는 이름 확인에서 제외: {ambiguous}")
+    return raids, title_names, boss_names
 
 
 # 서버 시작 시 한 번 만든다 (DBupdate.py로 문서를 바꾸면 서버를 다시 시작해야 반영됨)
-KNOWN_NAMES, KNOWN_TITLES = build_known_names()
+RAIDS, TITLE_NAMES, BOSS_NAMES = build_raid_index()
+
+# "2관문", "2 관문", "이관문", "두 번째 관문", "두번째 관문"
+GATE_NUMBERS = {"일": 1, "이": 2, "삼": 3, "사": 4, "오": 5, "첫": 1, "두": 2, "세": 3, "네": 4, "다섯": 5}
 
 
-def find_known_name(query: str):
-    """검색어에 문서에 있는 레이드·보스 이름(또는 오타 수준으로 비슷한 이름)이 있으면 그 이름을, 없으면 None을 돌려준다"""
-    for name in KNOWN_NAMES:
-        if name in query:
-            return name
-    for word in re.split(r"[\s,]+", query):
-        if len(word) < 2:
-            continue
-        for name in KNOWN_NAMES:
-            if SequenceMatcher(None, word, name).ratio() >= NAME_SIMILARITY:
-                return name
+def boss_of(header: str) -> str:
+    """섹션명에서 보스 이름만 남긴다 (예: 2관문: 나이트레아 주요 패턴 및 기믹 → 나이트레아)"""
+    return re.sub(r"^\d+관문:\s*", "", header).replace(" 주요 패턴 및 기믹", "")
+
+
+def find_gate(query: str):
+    """검색어의 관문 번호를 돌려준다. 없으면 None"""
+    match = re.search(r"(\d+)\s*관문", query)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"(첫|두|세|네|다섯)\s*번?\s*째\s*관문", query)
+    if match:
+        return GATE_NUMBERS[match.group(1)]
+    # "이관문"은 앞이 공백이거나 문장 처음일 때만 (예: "세르카이관문"의 조사 '이'를 2관문으로 읽지 않기 위해)
+    match = re.search(r"(?:^|\s)(일|이|삼|사|오)관문", query)
+    if match:
+        return GATE_NUMBERS[match.group(1)]
     return None
+
+
+def name_score(query: str, name: str) -> float:
+    """검색어 안에 이름이 그대로 있으면 1.0, 아니면 검색어 단어와의 가장 높은 유사도 (오타 허용)"""
+    if name in query:
+        return 1.0
+    words = [word for word in re.split(r"[\s,]+", query) if len(word) >= 2]
+    return max((SequenceMatcher(None, word, name).ratio() for word in words), default=0.0)
+
+
+def find_raid(query: str):
+    """검색어가 가리키는 레이드를 돌려준다: (source_file, 보스 이름으로 찾았으면 [(source, 관문), ...] 아니면 None, 찾은 이름)
+    문서에 있는 이름이 없으면 None. 가장 점수가 높은 이름을 고르고, 같은 점수면 레이드 제목 > 긴 이름 순
+    ("세르카"는 레이드 제목이자 1관문 보스 이름이라 레이드로 본다)"""
+    candidates = [(name_score(query, name), 1, len(name), name, source, None) for name, source in TITLE_NAMES.items()]
+    candidates += [(name_score(query, name), 0, len(name), name, places[0][0], places) for name, places in BOSS_NAMES.items()]
+    if not candidates:
+        return None
+    score, _, _, name, source, boss_places = max(candidates, key=lambda c: c[:4])
+    if score < NAME_SIMILARITY:
+        return None
+    return source, boss_places, name
+
+
+def retrieve(query: str):
+    """검색어로 공략 청크를 찾는다 (search_game_guide와 rag_eval.py가 같이 사용)
+    성공하면 Document 목록, 검색하지 않고 안내해야 하면 안내 문자열을 돌려준다
+    - 레이드·보스 이름이 없음 → 문서 없음 안내
+    - 관문 번호 없음 → 그 레이드 문서 안에서만 유사도 검색
+    - 관문 번호 있음 → 그 관문 청크를 유사도와 상관없이 넣고, 같은 레이드 개요를 보조로 붙임
+      (임베딩은 "1관문"과 "2관문"을 거의 구분하지 못해, 순위에 맡기면 다른 관문이 1위가 됨)
+    - 없는 관문, 보스와 관문 불일치 → 비슷한 문서를 주지 않고 안내
+    """
+    found = find_raid(query)
+    if found is None:
+        print("🚫 [No Matching Raid] 검색어에서 문서에 있는 레이드·보스 이름을 찾지 못함")
+        titles = " / ".join(sorted(raid["title"] for raid in RAIDS.values()))
+        return ("검색어에서 공략 문서가 있는 레이드·보스 이름을 찾지 못했습니다. "
+                f"공략 문서가 있는 레이드: {titles}. "
+                "이 목록에 없는 레이드라면 공략 문서가 없다고 답하고, "
+                "레이드 이름이 빠진 질문이라면 어느 레이드인지 물어보세요.")
+
+    source, boss_places, name = found
+    raid = RAIDS[source]
+    gate = find_gate(query)
+
+    if gate is None:
+        k = decide_k(query)
+        print(f"🎯 [Raid Filter] '{name}' → {raid['title']} 문서 안에서 검색 (k={k})")
+        return vector_store.similarity_search(query=query, k=k, filter={"source_file": source})
+
+    if gate not in raid["gates"]:
+        print(f"⚠️ [Gate Not Found] {raid['title']}에 {gate}관문 없음")
+        return (f"공략 문서에서 '{raid['title']}'은(는) {max(raid['gates'])}관문까지 있습니다. "
+                f"{gate}관문 공략 문서는 없다고 답할 것.")
+
+    if boss_places and (source, gate) not in boss_places:
+        boss_gates = ", ".join(f"{g}관문" for _, g in boss_places)
+        print(f"⚠️ [Gate Mismatch] '{name}'은(는) {raid['title']} {boss_gates} 보스인데 {gate}관문을 물음")
+        return (f"공략 문서에서 '{name}'은(는) '{raid['title']}' {boss_gates} 보스이고, "
+                f"{gate}관문 보스는 '{boss_of(raid['gates'][gate])}'입니다. "
+                "어느 쪽을 물은 것인지 사용자에게 확인할 것.")
+
+    print(f"🎯 [Gate Filter] '{name}' → {raid['title']} {gate}관문 + 개요")
+    docs = vector_store.similarity_search(
+        query=query, k=1, filter={"$and": [{"source_file": source}, {"Header 2": raid["gates"][gate]}]})
+    if raid["overview"]:
+        docs += vector_store.similarity_search(
+            query=query, k=1, filter={"$and": [{"source_file": source}, {"Header 2": raid["overview"]}]})
+    return docs
 
 
 def decide_k(query: str) -> int:
@@ -93,23 +192,12 @@ def search_game_guide(query: str) -> list:
     if not vector_store:
         return [{"error": "벡터 DB(Chroma)가 초기화되지 않았습니다."}]
     
-    # 벡터 검색은 관련이 없어도 가장 가까운 문서를 돌려주므로, 문서에 없는 레이드·보스면 검색하지 않는다
-    if find_known_name(query) is None:
-        print(f"🚫 [No Matching Raid] 검색어에서 문서에 있는 레이드·보스 이름을 찾지 못함")
-        print("-" * 50)
-        return [{"error": "검색어에서 공략 문서가 있는 레이드·보스 이름을 찾지 못했습니다. "
-                          f"공략 문서가 있는 레이드: {' / '.join(sorted(KNOWN_TITLES))}. "
-                          "이 목록에 없는 레이드라면 공략 문서가 없다고 답하고, "
-                          "레이드 이름이 빠진 질문이라면 어느 레이드인지 물어보세요."}]
-
     try:
-        # 💡 [동적 검색 전략] 질문의 성격에 따라 가져올 문서 개수(k)를 유동적으로 결정
-        k = decide_k(query)
-
-        print(f"🎯 [동적 k 적용] 설정된 k값: {k}")
-
-        # 💡 as_retriever().invoke() 대신 similarity_search() 직접 호출
-        retrieved_docs = vector_store.similarity_search(query=query, k=k)
+        # 이름 확인, 레이드·관문 필터, 동적 k는 retrieve()에서 처리
+        retrieved_docs = retrieve(query)
+        if isinstance(retrieved_docs, str):  # 문서 없음·없는 관문·보스와 관문 불일치 안내
+            print("-" * 50)
+            return [{"error": retrieved_docs}]
         
         if not retrieved_docs:
             return [{"error": f"'{query}'에 해당하는 공략 문서를 찾지 못했습니다."}]
