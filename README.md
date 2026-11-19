@@ -185,6 +185,7 @@ python -m unittest test_llm_error_messages -v
 - **저장소**: LangGraph 공식 패키지 `langgraph-checkpoint-sqlite`(3.1.3)의 `SqliteSaver`. 새 DB 서버나 접속 정보 없이 파일 하나로 저장되고, 그래프 코드는 checkpointer만 바꾸면 됩니다. FastAPI가 요청을 여러 스레드에서 처리하므로 `check_same_thread=False`로 연결하고, 동시 접근은 `SqliteSaver` 내부 lock이 막습니다.
 - **계정 연결**: `thread_id`는 브라우저가 보낸 값이 아니라 Spring이 로그인 계정으로 정합니다(`user:` + 아이디). 브라우저 값을 그대로 믿으면 다른 사람의 `thread_id`를 넣어 그 사람의 대화를 이어 쓰거나 볼 수 있기 때문입니다. 계정당 대화는 하나입니다.
 - **화면 복원**: 채팅 화면을 열면 `/chat/history`(Spring) → `/history`(FastAPI)로 저장된 대화에서 사용자 질문과 최종 AI 답변만 골라 최근 50개를 다시 보여 줍니다(툴 호출·툴 결과는 제외).
+- **새 대화**: 채팅 화면의 "새 대화" 버튼을 누르면 확인 창을 거쳐 `/chat/history`(Spring, DELETE) → `/history`(FastAPI, DELETE)로 로그인 계정의 저장된 대화를 지우고(`SqliteSaver.delete_thread`), 화면도 첫 안내 메시지만 남깁니다. 지운 대화는 되돌릴 수 없습니다.
 
 ```bash
 cd ai-agent
@@ -194,8 +195,8 @@ cd backend/loaagent
 .\gradlew test --tests "com.esprit.loaagent.chat.ChatHistoryApiTest"
 ```
 
-- Python(5건): 임시 SQLite 파일로 대화 후 연결을 닫고 새로 연결해도 대화가 남는지, 계정별로 따로 저장되는지, `/history`가 질문과 최종 답변만 최근 50개 돌려주는지 확인
-- Spring(3건): 가짜 FastAPI로 브라우저가 다른 `thread_id`를 보내도 로그인 계정 값으로 바뀌는지, 기록 조회가 계정 값으로 가는지, 조회 실패 시 502와 빈 목록인지 확인
+- Python(6건): 임시 SQLite 파일로 대화 후 연결을 닫고 새로 연결해도 대화가 남는지, 계정별로 따로 저장되는지, `/history`가 질문과 최종 답변만 최근 50개 돌려주는지, 새 대화(삭제)가 내 계정 대화만 지우고 이후 질문은 빈 대화로 시작하는지 확인
+- Spring(5건): 가짜 FastAPI로 브라우저가 다른 `thread_id`를 보내도 로그인 계정 값으로 바뀌는지, 기록 조회·삭제가 계정 값으로 가는지, 조회·삭제 실패 시 502인지 확인
 - 실제 서버 확인(2026-11-19, Gemini 3.1 Flash Lite): FastAPI에 "내 이름은 테스트야"를 보낸 뒤 서버를 껐다 켜고 `/history`로 두 메시지가 남아 있는 것과, "내 이름이 뭐라고 했지?"에 "테스트"라고 답하는 것을 확인
 
 ## RAG 검색 평가
@@ -300,7 +301,7 @@ cd backend/loaagent
 
 ## 한계와 개선 계획
 
-- 대화는 계정당 하나라 "새 대화"로 나눌 수 없고, 지우는 기능도 없음. 저장된 대화는 계속 쌓이지만 LLM에는 `trim_messages`로 최근 12,000토큰만 전달됨
+- 대화는 계정당 하나라 "새 대화"를 누르면 이전 대화는 지워짐(여러 대화를 목록으로 보관하는 기능은 없음). 지우기 전까지 대화는 계속 쌓이지만 LLM에는 `trim_messages`로 최근 12,000토큰만 전달됨
 - 대화 기록은 AI 서버 PC의 SQLite 파일에 있어 AI 서버를 여러 대로 늘리면 공유되지 않음(그때는 MySQL·Postgres 같은 DB checkpointer 필요)
 - LLM 오류 안내는 FastAPI가 HTTP 200의 답변 문구로 돌려주므로, 채팅 화면에서는 오류 말풍선이 아닌 일반 답변 말풍선으로 보임
 - 연결 끊김 같은 네트워크 오류가 `ModelConnectionError`로 변환되는지는 확인하지 못함(langchain-google-genai 4.4.2 소스에서는 HTTP 상태 코드 오류만 공통 예외로 변환). 변환되지 않으면 "그 외" 문구로 처리됨

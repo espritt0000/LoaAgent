@@ -6,6 +6,7 @@ import com.esprit.loaagent.dto.ChatResponseDto;
 import io.netty.handler.timeout.ReadTimeoutException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -76,6 +77,22 @@ public class ChatApiController {
             // 기록을 못 가져와도 채팅은 할 수 있으므로 빈 목록과 502만 돌려준다
             System.out.println("📜 [History Error] 대화 기록 조회 실패 - " + e.getClass().getSimpleName());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(new ChatHistoryDto(List.of()));
+        }
+    }
+
+    // '새 대화' 버튼: 로그인 계정의 대화 기록을 지워 다음 질문부터 새 대화로 시작한다
+    @DeleteMapping("/chat/history")
+    public ResponseEntity<Void> deleteChatHistory(Principal principal) {
+        try {
+            fastapiWebClient.delete()
+                    .uri(uriBuilder -> uriBuilder.path("/history").queryParam("thread_id", threadIdOf(principal)).build())
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            return ResponseEntity.noContent().build();
+        } catch (WebClientException e) {
+            System.out.println("🗑️ [History Delete Error] 대화 기록 삭제 실패 - " + e.getClass().getSimpleName());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
         }
     }
 

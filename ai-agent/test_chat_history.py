@@ -4,6 +4,7 @@
 실행 위치: ai-agent 폴더
 실행 방법: python -m unittest test_chat_history -v
 - LLM은 Mock으로 바꾸고 임시 SQLite 파일을 쓴다. Gemini API는 호출하지 않는다.
+- '새 대화' 버튼용 DELETE /history가 해당 계정의 대화만 지우는지도 확인한다.
 """
 import sqlite3
 import tempfile
@@ -60,6 +61,23 @@ class ChatHistoryPersistenceTest(unittest.TestCase):
         other = graph.get_state({"configurable": {"thread_id": "user:b"}}).values.get("messages", [])
         conn.close()
         self.assertEqual(other, [])
+
+    def test_새_대화를_누르면_내_대화만_지워진다(self):
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        saver = SqliteSaver(conn)
+        graph = agent_module.workflow.compile(checkpointer=saver)
+        mine, other = {"configurable": {"thread_id": "user:a"}}, {"configurable": {"thread_id": "user:b"}}
+        graph.invoke({"messages": [HumanMessage(content="A의 질문")]}, config=mine)
+        graph.invoke({"messages": [HumanMessage(content="B의 질문")]}, config=other)
+
+        with patch.object(main, "checkpointer", saver):
+            main.delete_history_endpoint("user:a")
+
+        self.assertEqual(graph.get_state(mine).values.get("messages", []), [])
+        self.assertEqual(len(graph.get_state(other).values["messages"]), 2)  # 다른 계정 대화는 그대로
+        graph.invoke({"messages": [HumanMessage(content="새 질문")]}, config=mine)
+        self.assertEqual([m.content for m in graph.get_state(mine).values["messages"]], ["새 질문", "안녕하세요!"])
+        conn.close()
 
 
 class HistoryEndpointTest(unittest.TestCase):

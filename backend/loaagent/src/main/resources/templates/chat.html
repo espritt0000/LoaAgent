@@ -17,6 +17,12 @@
 
 <!-- 채팅 메인 영역 -->
 <main class="max-w-4xl mx-auto w-full flex-grow flex flex-col p-4 overflow-hidden">
+    <!-- 새 대화: 저장된 이전 대화를 지우고 처음부터 시작 -->
+    <div class="shrink-0 flex justify-end mb-2">
+        <button type="button" id="new-chat-btn" class="px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 text-sm text-slate-200 transition">
+            새 대화
+        </button>
+    </div>
     <!-- 대화 출력 박스 -->
     <div id="chat-container" class="flex-grow overflow-y-auto space-y-4 pr-2 mb-4">
         <!-- 봇 안내 메시지 -->
@@ -76,6 +82,21 @@
         }
     }
     loadHistory();
+
+    // '새 대화' 버튼: 서버에 저장된 대화를 지우고 화면도 첫 안내 메시지만 남긴다
+    document.getElementById('new-chat-btn').addEventListener('click', async function() {
+        if (!confirm('이전 대화가 삭제되고 되돌릴 수 없습니다. 새 대화를 시작할까요?')) return;
+        try {
+            const response = await fetch('/chat/history', { method: 'DELETE' });
+            if (!response.ok) throw new Error('대화 삭제 응답 상태 코드: ' + response.status);
+            while (chatContainer.children.length > 1) {
+                chatContainer.lastElementChild.remove();
+            }
+        } catch (error) {
+            console.error('대화 삭제 실패:', error);
+            alert('이전 대화를 지우지 못했습니다. 잠시 후 다시 시도해주세요.');
+        }
+    });
 
     chatForm.addEventListener('submit', async function(e) {
         e.preventDefault();

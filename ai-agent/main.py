@@ -9,7 +9,7 @@ from langchain_core.exceptions import (
     ModelTimeoutError,
     ModelConnectionError,
 )
-from agent.agent import app as agent_app
+from agent.agent import app as agent_app, checkpointer
 
 fastapi_app = FastAPI()
 
@@ -99,3 +99,11 @@ def history_endpoint(thread_id: str):
             messages.append(HistoryMessage(role=role, content=text))
     print(f"📜 [History] thread_id={thread_id}, 메시지 {len(messages)}개 중 최근 {min(len(messages), HISTORY_LIMIT)}개 반환")
     return HistoryResponse(messages=messages[-HISTORY_LIMIT:])
+
+
+@fastapi_app.delete("/history")
+def delete_history_endpoint(thread_id: str):
+    """'새 대화' 버튼: 이 thread_id의 저장된 대화(체크포인트)를 모두 지운다. 다음 질문부터 빈 대화로 시작된다"""
+    checkpointer.delete_thread(thread_id)
+    print(f"🗑️ [History Delete] thread_id={thread_id} 대화 기록 삭제")
+    return {"deleted": True}

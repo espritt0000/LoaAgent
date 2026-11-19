@@ -82,4 +82,23 @@ class ChatHistoryApiTest {
         assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
         assertTrue(response.getBody().messages().isEmpty());
     }
+
+    @Test
+    void 새_대화는_로그인_계정의_대화_기록만_지운다() throws Exception {
+        ChatApiController controller = controllerWithFakeFastapi("/history", 200, "{\"deleted\":true}");
+
+        ResponseEntity<Void> response = controller.deleteChatHistory(() -> "tester");
+
+        assertEquals("thread_id=user:tester", received.get());
+        assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    }
+
+    @Test
+    void 대화_기록_삭제가_실패하면_502() throws Exception {
+        ChatApiController controller = controllerWithFakeFastapi("/history", 500, "{}");
+
+        ResponseEntity<Void> response = controller.deleteChatHistory(() -> "tester");
+
+        assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
+    }
 }
