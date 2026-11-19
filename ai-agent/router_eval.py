@@ -8,6 +8,7 @@
 - 어려운 멀티턴: python router_eval.py hard  (24건 x 2회 = 호출 48회)
 - 맥락 있는 쪽만 측정: 뒤에 --ctx-only (예: python router_eval.py hard --ctx-only → 24회). 비교용 '후속 질문만' 호출을 건너뜀
 - 섞인 질문: python router_eval.py compound  (12건 = 호출 12회)
+- 처음 보는 질문: python router_eval.py holdout  (10건 = 호출 10회, 맥락 있는 쪽만)
 - 라우터 LLM만 호출합니다. Stove API·Chroma는 호출하지 않습니다.
 - 모델 바꿔서 측정: .env의 LLM_MODEL을 바꾸거나 실행할 때 지정 (Git Bash 예: LLM_MODEL=gemini-3.1-flash-lite python router_eval.py)
 """
@@ -165,6 +166,29 @@ HARD_CASES = [
 ]
 
 
+# 처음 보는 질문(과적합 확인): v3 [이전 대화 활용] 규칙을 다듬을 때 보지 않은 질문
+# - HARD_CASES로 규칙을 세 번 고쳤으므로, 그 질문에만 맞춰졌는지 확인하려고 따로 둔다
+# - 앞 대화 주제(벨가르딘·돌파석·샘플유저)와 말투를 HARD_CASES와 다르게 하고, 규칙마다 최소 한 문항
+# - 이 질문을 보고 규칙을 고치면 더 이상 '처음 보는 질문'이 아니므로, 규칙을 고친 뒤에는 새 질문을 만들 것
+HOLDOUT_GUIDE = ("벨가르딘 2관문 공략 알려줘", "벨가르딘 2관문은 무력화 패턴 뒤 전멸기를 피하는 것이 핵심이에요.")
+HOLDOUT_MARKET = ("운명의 돌파석 시세 어때?", "운명의 돌파석은 최근 거래가 120 골드예요.")
+HOLDOUT_CHARACTER = ("샘플유저 아이템 레벨 몇이야?", "샘플유저의 아이템 레벨은 1,740이에요.")
+HOLDOUT_SMALLTALK = ("요즘 너무 피곤하다", "푹 쉬는 것도 중요해요. 오늘은 일찍 주무세요!")
+
+HOLDOUT_CASES = [
+    ([HOLDOUT_MARKET], "그거 지난주랑 비교하면 어때?", "market_agent", "생략·지시어"),
+    ([HOLDOUT_GUIDE], "거기서 제일 어려운 패턴은 뭐야?", "guide_agent", "생략·지시어"),
+    ([HOLDOUT_CHARACTER], "그 사람 직업은 뭐야?", "character_agent", "생략·지시어"),
+    ([HOLDOUT_GUIDE, HOLDOUT_SMALLTALK], "아까 하던 얘기 이어서 해줘", "guide_agent", "이전 시점(잡담 사이)"),
+    ([HOLDOUT_CHARACTER, HOLDOUT_SMALLTALK], "아까 걔 전투력은?", "character_agent", "이전 시점(잡담 사이)"),
+    ([HOLDOUT_MARKET, HOLDOUT_GUIDE], "처음에 물어본 거 지금도 그 가격이야?", "market_agent", "이전 시점(주제 사이)"),
+    ([HOLDOUT_MARKET], "그건 됐고 세르카 1관문 기믹 알려줘", "guide_agent", "새 주제 우선"),
+    # 부작용 확인: 전문 에이전트로 보내면 안 되는 질문
+    ([HOLDOUT_CHARACTER], "고마워, 덕분에 알았어", "general_agent", "부작용(인사)"),
+    ([HOLDOUT_SMALLTALK], "그거 말고 다른 방법은?", "general_agent", "부작용(잡담 지시어)"),
+    ([], "그 사람 길드 어디야?", "general_agent", "부작용(앞 대화 없음)"),
+]
+
 # 두 영역이 섞인 질문(에이전트 간 협업 14번): (질문, 필요한 에이전트 목록, 유형)
 # - 유형 "의존": 앞 에이전트의 결과가 있어야 답할 수 있음 (공략 문서의 입장 레벨 → 캐릭터 아이템 레벨과 비교)
 # - 유형 "독립": 두 질문을 한 문장에 묶어, 각각 따로 답하면 됨
@@ -307,6 +331,8 @@ if __name__ == "__main__":
         run_context_eval(cases, "멀티턴", ctx_only)
     elif mode == "hard":
         run_context_eval(HARD_CASES, "어려운 멀티턴", ctx_only)
+    elif mode == "holdout":
+        run_context_eval(HOLDOUT_CASES, "처음 보는 질문", ctx_only=True)
     elif mode == "compound":
         run_compound_eval()
     else:
