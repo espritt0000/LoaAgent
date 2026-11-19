@@ -1,4 +1,6 @@
-from fastapi import FastAPI
+import os
+import secrets
+from fastapi import FastAPI, Depends, Header, HTTPException
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 from langchain_core.exceptions import (
@@ -9,9 +11,23 @@ from langchain_core.exceptions import (
     ModelTimeoutError,
     ModelConnectionError,
 )
-from agent.agent import app as agent_app, checkpointer
+from agent.agent import app as agent_app, checkpointer  # agent.py에서 .env를 읽는다 (load_dotenv)
 
-fastapi_app = FastAPI()
+# [내부 호출 인증] Spring만 FastAPI를 부를 수 있도록 미리 정한 키를 X-API-Key 헤더로 확인한다
+FASTAPI_API_KEY = os.getenv("FASTAPI_API_KEY")
+if not FASTAPI_API_KEY:
+    raise RuntimeError("🚨 [API KEY CONFIG] .env에 FASTAPI_API_KEY를 설정해야 합니다 (.env.example 참고)")
+
+
+def verify_api_key(x_api_key: str | None = Header(default=None)):
+    """모든 요청에서 X-API-Key 헤더를 확인한다. 없거나 틀리면 401"""
+    # 글자를 하나씩 비교하다 틀린 곳에서 멈추면 응답 시간 차이로 키를 추측할 수 있어, 걸리는 시간이 같은 compare_digest로 비교한다
+    if x_api_key is None or not secrets.compare_digest(x_api_key.encode(), FASTAPI_API_KEY.encode()):
+        print("🔒 [API Key] 키가 없거나 일치하지 않는 요청 거절 (401)")  # 키 값은 로그에 남기지 않는다
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+fastapi_app = FastAPI(dependencies=[Depends(verify_api_key)])
 
 class ChatRequest(BaseModel):
     message: str

@@ -19,7 +19,7 @@
             <p class="text-slate-400 text-sm">LoaAgent와 함께 스마트한 여정을 시작하세요.</p>
         </div>
 
-        <form action="/signup" th:object="${memberFormDto}" method="POST" class="space-y-5">
+        <form th:action="@{/signup}" th:object="${memberFormDto}" method="POST" class="space-y-5">
             <div th:if="${param.error}" class="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm text-center">
                 이미 사용 중인 아이디입니다.
             </div>

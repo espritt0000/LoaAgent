@@ -53,7 +53,8 @@ LoaAgent/
 │  ├─ rag_eval.py             # RAG 검색 평가 (정답 청크 순위, Hit@k, MRR)
 │  ├─ test_router_fallback.py # 라우터 재시도·폴백 단위 테스트 (Mock, API 호출 없음)
 │  ├─ test_llm_error_messages.py # LLM 오류 종류별 안내 문구 테스트 (Mock, API 호출 없음)
-│  └─ test_chat_history.py    # 대화 기록 영구 저장·/history 테스트 (Mock + 임시 SQLite)
+│  ├─ test_chat_history.py    # 대화 기록 영구 저장·/history 테스트 (Mock + 임시 SQLite)
+│  └─ test_api_key.py         # FastAPI 내부 호출용 API Key 테스트 (TestClient)
 └─ backend/loaagent/          # Spring Boot (인증·세션·화면)
 ```
 
@@ -82,10 +83,12 @@ uvicorn main:fastapi_app --port 8000
 
 **대화 기록 저장 위치**: `.env`의 `CHECKPOINT_DB_PATH`(예: `data/chat_history.sqlite`, ai-agent 폴더 기준)에 SQLite 파일로 저장합니다. 값이 없으면 서버가 시작 단계에서 멈춥니다. 파일은 처음 실행할 때 자동으로 만들어지고 git에는 올라가지 않습니다.
 
+**내부 호출용 API Key**: `.env`의 `FASTAPI_API_KEY`와 백엔드 `application-secret.properties`의 `fastapi.api-key`에 같은 무작위 값을 넣습니다(만들기: `python -c "import secrets; print(secrets.token_urlsafe(32))"`). 어느 한쪽이라도 없으면 해당 서버가 시작 단계에서 멈추고, 값이 다르면 채팅 요청이 실패합니다(FastAPI 401 → 화면에는 502 안내).
+
 ### 2. 백엔드 (backend/loaagent)
 
 1. MySQL에 `loaagent_db` 데이터베이스 생성 (테이블은 실행 시 자동 생성)
-2. `src/main/resources/application-secret.properties.example`을 `application-secret.properties`로 복사해 비밀번호 입력
+2. `src/main/resources/application-secret.properties.example`을 `application-secret.properties`로 복사해 비밀번호와 내부 호출용 API Key(AI 서버 `.env`의 `FASTAPI_API_KEY`와 같은 값) 입력
 3. HTTPS 설정
    - HTTPS로 실행: `keytool -genkeypair -alias springboot -keyalg RSA -storetype PKCS12 -keystore src/main/resources/keystore.p12 -validity 365`로 인증서 생성
    - HTTP로 실행: 환경 변수 `SSL_ENABLED=false` 설정
@@ -282,6 +285,24 @@ cd backend/loaagent
 .\gradlew test --tests "com.esprit.loaagent.chat.ChatApiControllerTimeoutTest"
 ```
 
+## 보안: CSRF 보호와 내부 호출 인증
+
+- **CSRF 보호**: 개발 편의상 꺼 두었던 Spring Security CSRF 보호를 다시 켰습니다(기본값 사용). 로그인한 사용자가 악성 사이트를 열었을 때, 그 사이트가 세션 쿠키를 이용해 질문을 보내거나 대화를 지우는 요청(`POST /chat/ask`, `DELETE /chat/history`)을 막기 위한 것입니다. 로그인·회원가입·로그아웃 폼은 `th:action`이 토큰을 자동으로 넣고, 채팅 화면의 fetch 요청은 `<meta>`에 심은 토큰을 헤더(`X-CSRF-TOKEN`)로 보냅니다.
+- **FastAPI 내부 호출 인증**: FastAPI의 모든 요청에서 `X-API-Key` 헤더를 `secrets.compare_digest`(비교 시간이 일정해 응답 시간으로 키를 추측할 수 없음)로 확인하고, 없거나 틀리면 401을 돌려줍니다. Spring의 WebClient가 모든 요청에 같은 키를 붙입니다. Spring을 거치지 않고 FastAPI를 직접 호출하면 로그인 확인과 `thread_id`를 계정으로 정하는 보호를 건너뛸 수 있기 때문입니다.
+- **방식 선택**: 서비스가 두 개이고 같은 PC 안에서만 통신해 공유 API Key를 썼습니다. 기존 HTTPS 인증서(`keystore.p12`)는 브라우저와 Spring 사이의 서버 인증서라 용도가 다르고, 인증서로 서로 확인하는 mTLS는 인증서 발급·변환과 양쪽 SSL 설정이 필요해 지금 규모에는 과하다고 판단했습니다.
+
+```bash
+cd ai-agent
+python -m unittest test_api_key -v
+
+cd backend/loaagent
+.\gradlew test --tests "com.esprit.loaagent.chat.CsrfProtectionTest"
+```
+
+- Python(4건): 키 없음·틀린 키는 401, 맞는 키는 통과, `/chat`·`DELETE /history`도 키 필요
+- Spring(6건): 실제 `SecurityConfig`를 적용한 MockMvc로 토큰 없는 질문·삭제 요청은 403, 토큰이 있으면 통과, 채팅 화면 `<meta>`의 토큰을 같은 세션으로 헤더에 넣으면 통과(fetch와 같은 방식), 로그인 폼에 토큰 필드가 들어가는지 확인
+- 실제 서버 확인(2026-11-19): uvicorn으로 띄운 FastAPI에 키 없음·틀린 키는 401, 맞는 키는 200
+
 ## 회원가입 입력값 검증
 
 회원가입 폼은 Bean Validation(`spring-boot-starter-validation`)으로 서버에서 검증하고, 오류가 있으면 저장하지 않고 입력값과 함께 필드별 오류 메시지를 보여 줍니다(비밀번호는 다시 채우지 않음).
@@ -302,6 +323,7 @@ cd backend/loaagent
 ## 한계와 개선 계획
 
 - 대화는 계정당 하나라 "새 대화"를 누르면 이전 대화는 지워짐(여러 대화를 목록으로 보관하는 기능은 없음). 지우기 전까지 대화는 계속 쌓이지만 LLM에는 `trim_messages`로 최근 12,000토큰만 전달됨
+- 내부 호출용 API Key는 공유 비밀값 하나라 교체 기능(옛 키·새 키 동시 허용)이 없고, Spring → FastAPI 통신은 암호화되지 않음(같은 PC 안 통신 전제). 서버를 나눠 배포하면 비밀 관리 도구와 키 교체, 내부 CA로 발급한 인증서의 mTLS 검토. FastAPI의 자동 문서(`/docs`)는 키 없이 열림
 - 대화 기록은 AI 서버 PC의 SQLite 파일에 있어 AI 서버를 여러 대로 늘리면 공유되지 않음(그때는 MySQL·Postgres 같은 DB checkpointer 필요)
 - LLM 오류 안내는 FastAPI가 HTTP 200의 답변 문구로 돌려주므로, 채팅 화면에서는 오류 말풍선이 아닌 일반 답변 말풍선으로 보임
 - 연결 끊김 같은 네트워크 오류가 `ModelConnectionError`로 변환되는지는 확인하지 못함(langchain-google-genai 4.4.2 소스에서는 HTTP 상태 코드 오류만 공통 예외로 변환). 변환되지 않으면 "그 외" 문구로 처리됨

@@ -58,6 +58,9 @@ public class ChatApiController {
         } catch (WebClientResponseException e) {
             // FastAPI가 4xx/5xx로 응답한 경우
             System.out.println("❌ [FastAPI Error Response] 상태 코드 " + e.getStatusCode().value());
+            if (e.getStatusCode().value() == 401) {
+                System.out.println("🔒 [FastAPI API Key] 키 불일치 - fastapi.api-key와 ai-agent/.env의 FASTAPI_API_KEY 확인 필요");
+            }
             return errorResponse(HttpStatus.BAD_GATEWAY,
                     "AI 서버에서 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
         }
