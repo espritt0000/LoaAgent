@@ -31,7 +31,7 @@ class ChatHistoryPersistenceTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = str(Path(self.tmp.name) / "history.sqlite")
         router = MagicMock()
-        router.invoke.return_value = SimpleNamespace(destination="general_agent")
+        router.invoke.return_value = SimpleNamespace(steps=[SimpleNamespace(agent="general_agent", task="")])
         general = MagicMock()
         general.invoke.return_value = AIMessage(content="안녕하세요!")
         trimmer = MagicMock()
@@ -95,6 +95,18 @@ class HistoryEndpointTest(unittest.TestCase):
             AIMessage(content=[{"type": "text", "text": "1관문은 "}, {"type": "text", "text": "장판 패턴이 핵심이에요."}]),
         ])
         self.assertEqual(result, [("user", "세르카 1관문 기믹 알려줘"), ("ai", "1관문은 장판 패턴이 핵심이에요.")])
+
+    def test_두_단계로_처리한_질문은_마지막_답변만_돌려준다(self):
+        # Planner가 두 에이전트로 처리하면 단계마다 AI 답변이 남는다. 채팅 화면처럼 최종 답변만 보여 준다
+        result = self.history_of([
+            HumanMessage(content="니나브았아로 칠흑 하드 갈 수 있어?"),
+            AIMessage(content="아이템 레벨은 1,770입니다."),        # 1단계 (character_agent)
+            AIMessage(content="입장 레벨 1,700이라 입장 가능합니다."),  # 2단계 (guide_agent, 최종)
+            HumanMessage(content="고마워"),
+            AIMessage(content="천만에요!"),
+        ])
+        self.assertEqual(result, [("user", "니나브았아로 칠흑 하드 갈 수 있어?"), ("ai", "입장 레벨 1,700이라 입장 가능합니다."),
+                                  ("user", "고마워"), ("ai", "천만에요!")])
 
     def test_대화가_없으면_빈_목록(self):
         fake_app = MagicMock()
