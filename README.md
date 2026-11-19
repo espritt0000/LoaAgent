@@ -77,7 +77,7 @@ python utils/DBupdate.py          # 공략 문서를 Chroma에 적재
 uvicorn main:fastapi_app --port 8000
 ```
 
-**LLM 모델 바꾸기**: 모델은 코드가 아니라 `.env`의 `LLM_PROVIDER`(LangChain 공급자 이름, 기본 `google_genai`)와 `LLM_MODEL`(기본 `gemini-3.5-flash-lite`)로 정합니다. LangChain `init_chat_model`로 만들기 때문에 같은 코드로 다른 공급자도 지정할 수 있지만, `google_genai` 외의 공급자는 해당 패키지(예: `langchain-anthropic`)와 API 키가 필요하고 아직 실행해 보지 않았습니다. 패키지가 없으면 서버 시작 시 `ImportError`가 납니다.
+**LLM 모델 바꾸기**: 모델은 코드가 아니라 `.env`의 `LLM_PROVIDER`(LangChain 공급자 이름, 서비스에서는 `google_genai`)와 `LLM_MODEL`(서비스에서는 `gemini-3.5-flash-lite`)로 정합니다. 코드에는 기본 모델을 두지 않아, 두 값이 없으면 서버가 시작 단계에서 오류를 내고 멈춥니다(설정이 빠졌는데 다른 모델로 조용히 실행되는 것을 막기 위해). LangChain `init_chat_model`로 만들기 때문에 같은 코드로 다른 공급자도 지정할 수 있지만, `google_genai` 외의 공급자는 해당 패키지(예: `langchain-anthropic`)와 API 키가 필요하고 아직 실행해 보지 않았습니다. 패키지가 없으면 서버 시작 시 `ImportError`가 납니다.
 
 ### 2. 백엔드 (backend/loaagent)
 

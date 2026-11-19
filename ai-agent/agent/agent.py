@@ -24,12 +24,15 @@ class AgentState(MessagesState):
     - next_node: 라우터가 다음에 실행해야 한다고 판단한 전문 에이전트 노드 이름
     """
     next_node: str = Field(default="", description="다음에 실행할 node 이름")
-# [LLM 교체] 모델을 코드가 아니라 .env 설정값으로 정한다 (값이 없으면 서비스 기본 모델)
+# [LLM 교체] 모델을 코드가 아니라 .env 설정값으로 정한다 (코드에 기본 모델을 두지 않음, .env.example 참고)
 # - LLM_PROVIDER: LangChain 공급자 이름 (google_genai, ollama, anthropic 등)
 #   google_genai 외의 공급자는 해당 패키지(langchain-ollama, langchain-anthropic 등)와 API 키가 필요하다
 # - LLM_MODEL: 공급자의 모델 이름
-LLM_PROVIDER = os.getenv("LLM_PROVIDER") or "google_genai"
-LLM_MODEL = os.getenv("LLM_MODEL") or "gemini-3.5-flash-lite"
+LLM_PROVIDER = os.getenv("LLM_PROVIDER")
+LLM_MODEL = os.getenv("LLM_MODEL")
+if not LLM_PROVIDER or not LLM_MODEL:
+    # 설정이 빠졌는데 다른 모델로 조용히 실행되지 않도록 서버 시작 단계에서 바로 멈춘다
+    raise RuntimeError("🚨 [LLM CONFIG] .env에 LLM_PROVIDER와 LLM_MODEL을 설정해야 합니다 (.env.example 참고)")
 print(f"🤖 [LLM CONFIG] provider={LLM_PROVIDER}, model={LLM_MODEL}")
 llm = init_chat_model(LLM_MODEL, model_provider=LLM_PROVIDER)
 
