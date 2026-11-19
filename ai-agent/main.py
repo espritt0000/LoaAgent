@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
+import re
 from langchain_core.exceptions import (
     ModelRateLimitError,
     ModelAuthenticationError,
@@ -37,6 +38,20 @@ def to_text(content) -> str:
         return "".join(item.get("text", "") if isinstance(item, dict) else str(item) for item in content)
     return content
 
+
+def rate_limit_message(error) -> str:
+    """429를 분당 한도와 하루 한도로 나눠 안내한다 (하루 한도는 1~2분 뒤 다시 해도 계속 실패하므로)"""
+    text = str(error)
+    # Gemini 429 응답에는 걸린 한도 이름(quotaId)이 들어 있다. 예: GenerateRequestsPerDayPerProjectPerModel-FreeTier
+    if "PerDay" not in text:
+        return "요청이 많아 잠시 이용이 제한됐습니다. 1~2분 후 다시 시도해주세요."
+    # 한도가 풀릴 때까지 남은 시간(retryDelay, 초)이 있으면 시간·분으로 알려 준다
+    match = re.search(r"'retryDelay': '(\d+)s'", text)
+    if match:
+        hours, minutes = divmod(int(match.group(1)) // 60, 60)
+        return f"오늘 사용할 수 있는 AI 요청을 모두 사용했습니다. 약 {hours}시간 {minutes}분 후 다시 시도해주세요."
+    return "오늘 사용할 수 있는 AI 요청을 모두 사용했습니다. 한도가 초기화된 뒤 다시 시도해주세요."
+
 @fastapi_app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(chatRequest: ChatRequest):
     print(f"SpringBoot Request : {chatRequest.message}")
@@ -66,8 +81,8 @@ def chat_endpoint(chatRequest: ChatRequest):
 
     # LLM 오류는 LangChain 공통 예외(langchain_core.exceptions)로 구분한다 (모델을 바꿔도 그대로 사용 가능)
     except ModelRateLimitError as e:
-        print(f"🚦 [LLM Rate Limit] 사용량 제한(429) - {type(e).__name__}")
-        ai_reply = "요청이 많아 잠시 이용이 제한됐습니다. 1~2분 후 다시 시도해주세요."
+        ai_reply = rate_limit_message(e)
+        print(f"🚦 [LLM Rate Limit] 사용량 제한(429, {'하루' if 'PerDay' in str(e) else '분당 등'} 한도) - {type(e).__name__}")
     except (ModelAuthenticationError, ModelPermissionDeniedError) as e:
         # 키 값이 로그에 남지 않도록 예외 이름만 출력한다
         print(f"🔑 [LLM Auth Error] API 키 또는 권한 확인 필요 - {type(e).__name__}")

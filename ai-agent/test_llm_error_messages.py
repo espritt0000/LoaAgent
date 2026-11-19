@@ -42,6 +42,21 @@ class LLMErrorMessageTest(unittest.TestCase):
         self.assertEqual(reply, "요청이 많아 잠시 이용이 제한됐습니다. 1~2분 후 다시 시도해주세요.")
         self.assertEqual(calls, 1)  # 라우터가 재시도하지 않음
 
+    def test_하루_한도_429면_남은_시간_안내(self):
+        # 2026-11-19 실제 Gemini 3.5 응답에서 필요한 부분만 남긴 메시지
+        daily = GoogleRateLimitError(
+            "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'details': [{'@type': 'type.googleapis.com/google.rpc.QuotaFailure', "
+            "'violations': [{'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaValue': '500'}]}, "
+            "{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '9354s'}]}}")
+        reply, calls = self.ask_with_router_error(daily, "t-429-day")
+        self.assertEqual(reply, "오늘 사용할 수 있는 AI 요청을 모두 사용했습니다. 약 2시간 35분 후 다시 시도해주세요.")
+        self.assertEqual(calls, 1)
+
+    def test_하루_한도인데_남은_시간이_없으면_초기화_후_안내(self):
+        daily = GoogleRateLimitError("429 RESOURCE_EXHAUSTED quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+        reply, _ = self.ask_with_router_error(daily, "t-429-day-no-delay")
+        self.assertEqual(reply, "오늘 사용할 수 있는 AI 요청을 모두 사용했습니다. 한도가 초기화된 뒤 다시 시도해주세요.")
+
     def test_인증_오류면_설정_문제_안내(self):
         reply, _ = self.ask_with_router_error(GoogleAuthenticationError("401 UNAUTHENTICATED"), "t-401")
         self.assertEqual(reply, "AI 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요.")
