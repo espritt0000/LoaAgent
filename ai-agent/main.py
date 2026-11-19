@@ -78,7 +78,9 @@ def discard_failed_turn(config, question_id):
         if question_id not in ids:
             return
         failed_turn = messages[ids.index(question_id):]
-        agent_app.update_state(config, {"messages": [RemoveMessage(id=m.id) for m in failed_turn]})
+        # as_node가 없으면 마지막으로 상태를 쓴 노드의 분기(after_agent → tools_condition)가 빈 메시지로 다시 실행돼 실패한다
+        # (2단계 계획의 뒤 단계·synthesizer에서 실패한 경우). 다음 경로가 END로 고정된 synthesizer가 쓴 것으로 반영해 턴을 끝낸다
+        agent_app.update_state(config, {"messages": [RemoveMessage(id=m.id) for m in failed_turn]}, as_node="synthesizer")
         print(f"🧹 [History Cleanup] 실패한 턴의 메시지 {len(failed_turn)}개를 대화 기록에서 제거")
     except Exception as e:
         print(f"⚠️ [History Cleanup] 실패한 턴 정리 실패 - {type(e).__name__}")

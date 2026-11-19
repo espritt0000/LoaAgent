@@ -19,12 +19,16 @@ def plan_of(*agents):
 
 
 def fake_agent_llm(name, calls):
-    """호출될 때마다 받은 메시지를 기록하고, 툴 호출 없는 답변을 돌려주는 가짜 에이전트 LLM"""
+    """호출될 때마다 받은 메시지를 기록하고, 툴 호출 없는 답변을 돌려주는 가짜 에이전트 LLM
+    general_agent와 synthesizer는 같은 기본 llm을 쓰므로, 시스템 프롬프트로 어느 노드의 호출인지 구분한다"""
     mock = MagicMock()
 
     def answer(messages):
-        calls.append((name, messages))
-        return AIMessage(content=f"{name} 답변")
+        caller = name
+        if messages and messages[0].content == agent_module.synthesizer_system.content:
+            caller = "synthesizer"
+        calls.append((caller, messages))
+        return AIMessage(content=f"{caller} 답변")
     mock.invoke.side_effect = answer
     return mock
 
@@ -87,23 +91,61 @@ class PlannerTest(unittest.TestCase):
         self.assertNotIn("작업 계획", system.content)
         self.assertEqual(result["messages"][-1].content, "market_agent 답변")
 
-    def test_2단계_계획은_순서대로_실행하고_마지막_답변이_최종(self):
+    def test_1단계_general_agent도_synthesizer를_거치지_않는다(self):
+        result = self.run_graph(plan_of("general_agent"))
+        self.assertEqual([name for name, _ in self.calls], ["general_agent"])
+        self.assertEqual(result["messages"][-1].content, "general_agent 답변")
+
+    def test_2단계_계획은_순서대로_실행하고_synthesizer가_마지막에_한_번_최종_답변(self):
         result = self.run_graph(plan_of("guide_agent", "character_agent"))
-        self.assertEqual([name for name, _ in self.calls], ["guide_agent", "character_agent"])
-        self.assertEqual(result["messages"][-1].content, "character_agent 답변")
-        # 1단계 에이전트는 자기 담당을, 2단계 에이전트는 최종 답변 역할을 시스템 프롬프트로 받는다
+        self.assertEqual([name for name, _ in self.calls], ["guide_agent", "character_agent", "synthesizer"])
+        self.assertEqual(result["messages"][-1].content, "synthesizer 답변")
+        # 두 단계 에이전트 모두 자기 담당만 정리하라는 같은 역할을 받는다 (합치기는 synthesizer가 맡음)
         first_system, second_system = self.calls[0][1][0], self.calls[1][1][0]
         self.assertIn("1단계 담당", first_system.content)
         self.assertIn("2단계 담당", second_system.content)
-        self.assertIn("최종 답변", second_system.content)
+        for system in (first_system, second_system):
+            self.assertIn("네 담당 부분만", system.content)
+            self.assertNotIn("최종 답변을 써라", system.content)
+
+    def test_synthesizer는_질문과_두_단계_결과를_자료로_받는다(self):
+        self.run_graph(plan_of("guide_agent", "market_agent"), question="공략이랑 시세 알려줘")
+        synth_input = self.calls[-1][1]
+        # 시스템 프롬프트 + 자료를 담은 사용자 메시지 하나 (앞 단계 답이 AI 메시지로 들어가지 않음)
+        self.assertEqual(len(synth_input), 2)
+        self.assertIsInstance(synth_input[1], HumanMessage)
+        material = synth_input[1].content
+        self.assertIn("[사용자 질문]\n공략이랑 시세 알려줘", material)
+        self.assertIn("[1단계 결과 - guide_agent]\nguide_agent 답변", material)
+        self.assertIn("[2단계 결과 - market_agent]\nmarket_agent 답변", material)
+
+    def test_synthesizer는_이번_턴_결과만_받는다(self):
+        router_llm = MagicMock()
+        router_llm.invoke.side_effect = [plan_of("market_agent"), plan_of("guide_agent", "market_agent")]
+        graph = agent_module.workflow.compile(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "t"}, "recursion_limit": 15}
+        with patch.object(agent_module, "router_llm", router_llm):
+            graph.invoke({"messages": [HumanMessage(content="이전 질문")]}, config=config)
+            graph.invoke({"messages": [HumanMessage(content="이번 질문")]}, config=config)
+        material = self.calls[-1][1][1].content
+        self.assertIn("이번 질문", material)
+        self.assertNotIn("이전 질문", material)
+        self.assertEqual(material.count("market_agent 답변"), 1)  # 이전 턴의 market 답변은 빠진다
+
+    def test_잘린_단계_안내가_synthesizer_자료의_계획에_들어간다(self):
+        self.run_graph(plan_of("guide_agent", "character_agent", "market_agent"))
+        material = self.calls[-1][1][1].content
+        self.assertIn("[작업 계획]", material)
+        self.assertIn("따로 다시 물어봐", material)
 
     def test_2단계_에이전트에는_단계_지시를_사용자_메시지로_덧붙이고_기록에는_남기지_않는다(self):
         result = self.run_graph(plan_of("guide_agent", "character_agent"))
         second_input = self.calls[1][1]
         self.assertIsInstance(second_input[-1], HumanMessage)
         self.assertIn("[작업 계획 2단계]", second_input[-1].content)
-        # 저장된 대화에는 질문과 두 단계 답변만 있다
-        self.assertEqual([m.content for m in result["messages"]], ["질문", "guide_agent 답변", "character_agent 답변"])
+        # 저장된 대화에는 질문, 두 단계 답변, 합친 최종 답변만 있다 (자료 메시지는 저장하지 않음)
+        self.assertEqual([m.content for m in result["messages"]],
+                         ["질문", "guide_agent 답변", "character_agent 답변", "synthesizer 답변"])
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ LangGraph 기반 멀티 에이전트로 **경매장 시세 조회 · 캐릭터 �
 
 | 에이전트 | 하는 일 | 사용 Tool |
 | --- | --- | --- |
-| Router | 질문을 1~2단계 작업 계획(에이전트 + 할 일)으로 나눔 (Structured Output). 대부분 1단계, 두 영역이 필요하면 2단계로 순서대로 실행. 분류 실패 시 1회 재시도 후 General Agent로 폴백 | – |
+| Router | 질문을 1~2단계 작업 계획(에이전트 + 할 일)으로 나눔 (Structured Output). 대부분 1단계, 두 영역이 필요하면 2단계로 순서대로 실행한 뒤 synthesizer가 합침. 분류 실패 시 1회 재시도 후 General Agent로 폴백 | – |
 | Market Agent | 경매장 아이템의 전일 평균가·최근 거래가 조회 | `get_market_options` → `search_market_items` |
 | Character Agent | 캐릭터 기본 프로필(서버, 직업, 레벨, 전투력, 길드) 조회 | `get_character_profile` |
 | Guide Agent | 레이드 공략 문서 RAG 검색, 정보가 부족하면 재검색 | `search_game_guide` |
@@ -23,7 +23,8 @@ LangGraph 기반 멀티 에이전트로 **경매장 시세 조회 · 캐릭터 �
                                                               ├─ Router
                                                               ├─ Market / Character Agent ──▶ Stove API
                                                               ├─ Guide Agent ──▶ Chroma (BGE-M3)
-                                                              └─ General Agent
+                                                              ├─ General Agent
+                                                              └─ Synthesizer (2단계 계획일 때 결과 합치기)
                                                      (모든 에이전트의 LLM: Gemini)
 ```
 
@@ -31,7 +32,7 @@ LangGraph 기반 멀티 에이전트로 **경매장 시세 조회 · 캐릭터 �
 
 | 항목 | 내용 | 설계 문서 |
 | --- | --- | --- |
-| 작업 계획(Planner) | 라우터가 1~2단계 계획을 세우고 에이전트를 순서대로 실행, 마지막 단계가 앞 결과를 합쳐 최종 답변 | 5.2 |
+| 작업 계획(Planner) | 라우터가 1~2단계 계획을 세우고 에이전트를 순서대로 실행. 2단계면 툴 없는 합치기 노드(synthesizer)가 단계별 결과를 자료로 받아 최종 답변 | 5.2 |
 | 라우터 실패 대응 | 분류 실패 시 1회 재시도 → General Agent 폴백. LLM 호출 자체가 실패하면(429·인증·서버 장애) 재시도 없이 중단 | 5.2 |
 | LLM 오류 안내 | LangChain 공통 예외로 429(분당/하루 한도 구분)·인증·서버 장애를 나눠 안내, 실패한 턴은 대화 기록에서 제거 | 4.2 |
 | 대화 기록 | `SqliteSaver`로 영구 저장, `thread_id`는 Spring이 로그인 계정으로 결정, 새로고침 시 복원, '새 대화' 버튼 | 4.1, 4.2 |
@@ -138,6 +139,7 @@ FastAPI 호출 제한 시간은 `application.properties`의 `fastapi.*`(연결 3
 | 관문 필터 (관문 검색어 10개 + 조건 불일치 4개) | 관문 청크 포함 4/10 → 10/10, 없는 관문·보스 불일치 안내 0/4 → 4/4, 기존 검색어 회귀 없음 | `python rag_eval.py` | 7.4 |
 | 두 영역이 섞인 질문 - 라우터 계획 (12건, 3.1) | 섞인 질문 9건: 변경 전 모두 둘 중 하나만 → 변경 후 9/9 두 에이전트, 함정 3/3 | `python router_eval.py compound` | 7.5 |
 | 두 영역이 섞인 질문 - 실제 답변 (5문항 × 3회, 3.1) | 두 영역 모두 답함: 변경 전 0/5 → 변경 후 11/15 (실패 4건 중 2건은 검색 문제, 1건은 Gemini 503) | `python compound_eval.py` | 7.5 |
+| 합치기 노드(synthesizer) (6문항 × 3회, 3.1) | 모든 영역 확인 18/18 → 17/18 (실패 1건은 라우터의 캐릭터명 오해석), 앞 단계 누락 0 → 0, 답변에 "1단계에서" 같은 내부 표현 1 → 0. 실행당 LLM 호출 31 → 36. 라우터 회귀(3.5) 단일 40/40, 섞인 질문 12/12 | `python compound_eval.py` | 7.5 |
 
 `router_eval.py`는 서비스와 같은 `LLM_MODEL` 설정을 쓰므로 실행할 때 값만 바꾸면 모델별로 비교할 수 있습니다(Git Bash 예: `LLM_MODEL=gemini-3.1-flash-lite python router_eval.py`). 다른 공급자 모델과의 비교는 아직 하지 않았습니다.
 
@@ -158,7 +160,7 @@ cd backend/loaagent
 | 테스트 | 확인 내용 |
 | --- | --- |
 | `test_router_fallback` | 라우터 재시도·폴백, LLM 호출 오류 시 중단 |
-| `test_planner` | 2단계 계획을 순서대로 실행, 1단계는 기존과 동일, 최대 2단계(넘으면 안내), 빈 계획 폴백 |
+| `test_planner` | 2단계 계획을 순서대로 실행 후 synthesizer 1회(이번 턴 결과만 자료로), 1단계는 synthesizer 없이 기존과 동일, 최대 2단계(넘으면 안내), 빈 계획 폴백 |
 | `test_llm_error_messages` | 429·인증·서버 오류·기타 예외별 안내 문구 |
 | `test_chat_history` | 재연결 후 대화 유지, 계정별 저장, `/history` 최근 50개, 새 대화(삭제) |
 | `test_api_key` | 키 없음·틀린 키 401, 맞는 키 통과 |

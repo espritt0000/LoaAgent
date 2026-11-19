@@ -125,6 +125,19 @@ class FailedTurnCleanupTest(unittest.TestCase):
         self.assertEqual(reply, "AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요.")
         self.assertEqual(self.stored(), [])
 
+    def test_synthesizer에서_실패해도_그_턴이_통째로_빠진다(self):
+        # 1단계(general_agent)는 답하고, 같은 llm을 쓰는 synthesizer 호출에서 503이 난다
+        self.general.invoke.side_effect = [AIMessage(content="1단계 답변"), ModelAPIError("503 UNAVAILABLE")]
+        character = MagicMock()
+        character.invoke.return_value = AIMessage(content="2단계 답변")
+        two_steps = SimpleNamespace(steps=[SimpleNamespace(agent="general_agent", task="인사"),
+                                           SimpleNamespace(agent="character_agent", task="캐릭터 조회")])
+        with patch.object(agent_module, "character_llm", character):
+            reply = self.ask("질문", router_result=two_steps)
+        self.assertEqual(reply, "AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요.")
+        self.assertEqual(self.general.invoke.call_count, 2)
+        self.assertEqual(self.stored(), [])
+
 
 if __name__ == "__main__":
     unittest.main()
