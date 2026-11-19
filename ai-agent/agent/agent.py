@@ -1,11 +1,13 @@
 from typing import Literal
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import SystemMessage, trim_messages
 from langchain_core.exceptions import ModelError
 from pydantic import BaseModel, Field
 import os
+import sqlite3
+from pathlib import Path
 from langchain.chat_models import init_chat_model
 from dotenv import load_dotenv
 
@@ -296,6 +298,15 @@ workflow.add_edge("guide_tools", "guide_agent")
 
 workflow.add_edge("general_agent", END)
 
-checkpointer = MemorySaver()
+# [대화 기록 영구 저장] MemorySaver(메모리) 대신 SQLite 파일에 저장해 서버를 다시 시작해도 대화가 남게 한다
+CHECKPOINT_DB_PATH = os.getenv("CHECKPOINT_DB_PATH")
+if not CHECKPOINT_DB_PATH:
+    raise RuntimeError("🚨 [CHECKPOINT CONFIG] .env에 CHECKPOINT_DB_PATH를 설정해야 합니다 (.env.example 참고)")
+checkpoint_path = Path(__file__).resolve().parent.parent / CHECKPOINT_DB_PATH  # ai-agent 폴더 기준 상대 경로
+checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+print(f"💾 [CHECKPOINT] 대화 기록 저장 위치: {checkpoint_path}")
+# FastAPI가 요청을 여러 스레드에서 처리하므로 check_same_thread=False (SqliteSaver가 내부 lock으로 읽기·쓰기를 보호)
+checkpoint_conn = sqlite3.connect(str(checkpoint_path), check_same_thread=False)
+checkpointer = SqliteSaver(checkpoint_conn)
 app = workflow.compile(checkpointer=checkpointer)
 # app = workflow.compile()
