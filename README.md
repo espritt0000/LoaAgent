@@ -169,12 +169,17 @@ Gemini 오류는 LangChain 공통 예외(`langchain_core.exceptions`)로 구분�
 
 | 오류 | 예외 | 안내 문구 |
 | --- | --- | --- |
-| 사용량 제한(429) | `ModelRateLimitError` | 요청이 많아 잠시 이용이 제한됐습니다. 1~2분 후 다시 시도해주세요. |
+| 사용량 제한(429) - 분당 등 | `ModelRateLimitError` | 요청이 많아 잠시 이용이 제한됐습니다. 1~2분 후 다시 시도해주세요. |
+| 사용량 제한(429) - 하루 한도 | `ModelRateLimitError` + 응답에 `PerDay` | 오늘 사용할 수 있는 AI 요청을 모두 사용했습니다. 약 N시간 N분 후 다시 시도해주세요. |
 | 인증·권한(401/403) | `ModelAuthenticationError`, `ModelPermissionDeniedError` | AI 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요. |
 | 서버 장애(5xx) 등 | `ModelAPIError`, `ModelTimeoutError`, `ModelConnectionError` | AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요. |
 | 그 외 | – | AI 에이전트 처리 중 오류가 발생했습니다. |
 
 컨텍스트 초과는 모든 노드에서 `trim_messages`(12,000토큰)로 입력을 자르므로 별도로 구분하지 않습니다.
+
+429는 분당 한도와 하루 한도를 나눠 안내합니다. 하루 한도에 걸리면 1~2분 뒤 다시 시도해도 한도가 초기화될 때까지 계속 실패하기 때문입니다. Gemini 429 응답에 들어 있는 한도 이름(`GenerateRequestsPerDayPerProjectPerModel-FreeTier`)에 `PerDay`가 있으면 하루 한도로 보고, 응답의 `retryDelay`(초)로 남은 시간을 알려 줍니다(2026-11-19 실제 Gemini 3.5 응답으로 확인). 이 구분은 Gemini 응답 형식에 기대므로, 다른 공급자 모델에서는 분당 한도 문구로 처리됩니다.
+
+오류로 답을 만들지 못한 턴은 대화 기록에서 뺍니다. 질문은 그래프 실행 전에 먼저 저장되므로, 그대로 두면 답 없는 질문(툴 호출·결과 포함)이 쌓여 다음 질문의 맥락에 섞이기 때문입니다(실제로 429 중에 보낸 질문 3개가 답 없이 쌓인 것을 확인). 질문 메시지에 id를 붙여 두고, 실패하면 그 질문부터 뒤의 메시지를 `RemoveMessage`로 지웁니다. 안내 문구도 대화 기록에 남기지 않아(LLM이 오류 문구를 자기 답변으로 보지 않도록), 새로고침하면 실패한 질문과 안내 문구는 화면에서 사라집니다.
 
 ```bash
 cd ai-agent
