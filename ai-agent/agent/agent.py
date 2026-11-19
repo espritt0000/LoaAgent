@@ -65,7 +65,7 @@ class PlanStep(BaseModel):
 
 class RouterOutput(BaseModel):
     """라우터가 세우는 작업 계획 (대부분 1단계, 두 영역이 모두 필요할 때만 2단계)"""
-    steps: list[PlanStep] = Field(description="실행할 단계 목록 (1~2개, 순서대로 실행되고 마지막 단계가 최종 답변을 씀)")
+    steps: list[PlanStep] = Field(description="실행할 단계 목록 (1~2개, 순서대로 실행되고 2단계면 마지막에 결과를 합쳐 최종 답변을 만듦)")
 
 router_llm = llm.with_structured_output(RouterOutput)
 # 라우터 분류 시도 횟수 (첫 시도 + 재시도 1회)
@@ -98,7 +98,7 @@ router_system = SystemMessage(content=
     - 대부분의 질문은 에이전트 하나로 답한다. steps에는 1개만 넣어라.
     - 한 질문 안에 서로 다른 에이전트의 정보가 모두 필요할 때만 2개를 넣어라. 최대 2개다.
     - 같은 에이전트가 답할 수 있는 대상이 여러 개(아이템 여러 개, 레이드 여러 개 등)여도 1개로 처리한다.
-    - 한 단계의 결과가 있어야 다른 단계가 답할 수 있으면, 정보를 먼저 찾는 단계를 앞에 둔다. 마지막 단계가 최종 답변을 쓴다.
+    - 한 단계의 결과가 있어야 다른 단계가 답할 수 있으면, 정보를 먼저 찾는 단계를 앞에 둔다.
     - 레이드 입장 레벨·입장 조건은 guide_agent가 공략 문서에서 찾는다.
     """)
 
@@ -173,17 +173,13 @@ def system_with_task(system: SystemMessage, state: AgentState) -> SystemMessage:
     if len(plan) < 2 or step >= len(plan):
         return system
     steps_text = "\n".join(f"        {i + 1}단계 {s['agent']}: {s['task']}" for i, s in enumerate(plan))
-    if step < len(plan) - 1:
-        role = "다음 단계 에이전트가 이어서 최종 답변을 쓰므로, 너는 네 담당 부분만 툴로 확인해 결과를 간단히 정리해라."
-    else:
-        role = ("대화에 있는 앞 단계 에이전트의 답변과 네가 확인한 내용을 합쳐, 사용자 질문 전체에 대한 최종 답변을 써라. "
-                "네 담당이 아닌 부분은 앞 단계 결과를 그대로 활용하고, 다시 조회하지 마라.")
+    # [synthesizer] 합치기는 마지막에 따로 하므로 모든 단계가 같은 역할(자기 담당만 확인)을 받는다
     return SystemMessage(content=system.content + f"""
     [이번 질문의 작업 계획]
     이 질문은 여러 에이전트가 순서대로 나눠 처리한다.
 {steps_text}
     너는 {step + 1}단계 담당이다: {plan[step]['task']}
-    {role}
+    너는 네 담당 부분만 툴로 확인해 결과를 정리해라. 다른 단계의 담당 내용은 다루지 마라. 최종 답변은 모든 단계가 끝난 뒤 따로 합쳐서 만든다.
     """)
 
 
@@ -207,7 +203,8 @@ def finish_step(state: AgentState, response) -> dict:
 
 
 def after_agent(tools_node: str):
-    """에이전트 다음 경로: 툴 호출이 있으면 툴 노드, 계획이 남았으면 다음 에이전트, 아니면 종료"""
+    """에이전트 다음 경로: 툴 호출이 있으면 툴 노드, 계획이 남았으면 다음 에이전트,
+    끝났으면 2단계 이상은 synthesizer(합치기), 1단계는 종료"""
     def decide(state: AgentState):
         if tools_node and tools_condition(state) == "tools":
             return tools_node
@@ -215,7 +212,7 @@ def after_agent(tools_node: str):
         if step < len(plan):
             print(f"➡️ [Plan Next] {step + 1}단계로 이동 ➡️ {plan[step]['agent']}")
             return plan[step]["agent"]
-        return END
+        return "synthesizer" if len(plan) >= 2 else END
     return decide
 
 
@@ -338,6 +335,61 @@ def general_agent(state: AgentState):
     return finish_step(state, response)
 
 
+# --- [5] 합치기 노드 (synthesizer) ---
+# 2단계 이상 계획에서 마지막 에이전트가 조회와 합치기를 같이 하면, 대화에 남은 앞 단계 답을
+# '이미 사용자에게 한 말'로 보고 빠뜨리거나("앞에서 설명한") 언급하는 문제가 있어, 합치기만 하는 노드로 나눈다
+synthesizer_system = SystemMessage(content=
+    """너는 로스트아크 AI 비서의 최종 답변 작성자야.
+    사용자 질문을 여러 에이전트가 나눠 처리했고, 너는 그 단계별 결과(자료)를 받아 사용자에게 보낼 답변 하나로 정리한다.
+    사용자는 단계별 결과를 본 적이 없고, 네 답변만 보게 된다.
+    [매우 중요한 규칙]
+    1. 모든 단계 결과를 빠짐없이 답변에 포함해라. 어느 단계의 내용도 생략하거나 '앞에서 설명했다'고 넘기지 마라.
+    2. 자료에 없는 내용은 덧붙이지 마라. 수치·이름·단위는 자료에 있는 그대로 쓸 것.
+    3. 단계 결과에 '찾을 수 없음', '문서 없음', '확인 필요', '다시 물어봐 달라' 같은 안내가 있으면 빼지 말고 그대로 전달해라.
+       작업 계획에 '이번에 처리하지 못하는 부분'이 있으면 그 부분은 따로 다시 물어봐 달라고 안내해라.
+    4. 질문이 여러 결과를 함께 따져야 답할 수 있으면, 자료에 있는 값만으로 판단해 결론을 써라.
+    5. '단계', '에이전트', '작업 계획', '자료' 같은 내부 처리 표현은 답변에 쓰지 마라.
+    """
+)
+
+
+def content_text(content) -> str:
+    """Gemini는 답변을 [{'type': 'text', 'text': ...}] 같은 리스트로 줄 때가 있어 문자열로 합친다"""
+    if isinstance(content, list):
+        return "".join(item.get("text", "") if isinstance(item, dict) else str(item) for item in content)
+    return content or ""
+
+
+def synthesis_input(state: AgentState) -> list:
+    """이번 턴의 질문과 단계별 결과를 대화가 아니라 '자료' 하나(사용자 메시지)로 정리한다 (대화 기록에는 저장하지 않음)"""
+    messages, plan = state["messages"], state.get("plan", [])
+    # 이번 턴 범위: 마지막 사용자 질문 이후 메시지
+    last_human = max(i for i, m in enumerate(messages) if m.type == "human")
+    question = content_text(messages[last_human].content)
+    # 단계별 결과: 툴 호출 없이 낸 AI 답변 (finish_step이 이 답변마다 단계를 하나씩 넘기므로 계획 순서와 짝이 맞는다)
+    results = [content_text(m.content) for m in messages[last_human + 1:] if m.type == "ai" and not m.tool_calls]
+
+    parts = [f"[사용자 질문]\n{question}",
+             "[작업 계획]\n" + "\n".join(f"{i + 1}단계 {s['agent']}: {s['task']}" for i, s in enumerate(plan))]
+    for i, s in enumerate(plan):
+        result = results[i] if i < len(results) else "(결과 없음)"
+        parts.append(f"[{i + 1}단계 결과 - {s['agent']}]\n{result}")
+    return [synthesizer_system, HumanMessage(content="\n\n".join(parts))]
+
+
+def synthesizer(state: AgentState):
+    """모든 단계 결과를 받아 툴 없이 최종 답변 하나로 합치는 노드 (2단계 이상 계획에서만 실행)"""
+    print("\n🧩 [NODE ENTER] Synthesizer 진입")
+    full_messages = synthesis_input(state)
+    print(f"📦 [Synthesizer Input] {full_messages[-1].content}")
+
+    response = llm.invoke(full_messages)
+
+    print(f"🤖 [Synthesizer Response] 생성된 최종 답변: {response.content}")
+    print("-" * 50)
+
+    return {"messages": [response]}
+
 
 # LangGraph 워크플로우 조립
 workflow = StateGraph(AgentState)
@@ -350,8 +402,10 @@ workflow.add_node("character_tools", ToolNode(character_tools))
 workflow.add_node("guide_agent", guide_agent)
 workflow.add_node("guide_tools", ToolNode(guide_tools))
 workflow.add_node("general_agent", general_agent)
+workflow.add_node("synthesizer", synthesizer)
 
 workflow.add_edge(START, "router")
+workflow.add_edge("synthesizer", END)
 
 workflow.add_conditional_edges(
     "router",
@@ -370,6 +424,7 @@ for agent_name, tools_node in [("market_agent", "market_tools"), ("character_age
                                ("guide_agent", "guide_tools"), ("general_agent", None)]:
     paths = {name: name for name in AGENT_NODES if name != agent_name}
     paths[END] = END
+    paths["synthesizer"] = "synthesizer"  # 2단계 이상 계획이 끝나면 합치기 노드로
     if tools_node:
         paths[tools_node] = tools_node
         workflow.add_edge(tools_node, agent_name)
