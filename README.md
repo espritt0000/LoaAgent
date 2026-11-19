@@ -127,7 +127,7 @@ FastAPI 호출 제한 시간은 `application.properties`의 `fastapi.*`(연결 3
 | --- | --- | --- | --- |
 | 라우터 단일 턴 분기 (40문항) | 40/40 (gemini-3.5·3.1-flash-lite 각 1회) | `python router_eval.py` | 7 |
 | 멀티턴 후속 질문 (28건) | 앞 대화와 함께 28/28, 후속 질문만 24/28 | `python router_eval.py multiturn` | 7.2 |
-| 단서 없는 후속 질문 (17건) | 앞 대화와 함께 15/17, 후속 질문만 6/17 | `python router_eval.py hard` | 7.3 |
+| 단서 없는 후속 질문 (24건, 3.5) | 라우터 프롬프트에 이전 대화 활용 규칙 추가 후 23/23 × 2회 (규칙 추가 전 같은 19건 15·17·16, 앞 대화 없는 지시어 4건은 계속 일반 대화로) | `python router_eval.py hard --ctx-only` | 7.3 |
 | RAG 검색 (검색어 55개, 청크 19개) | 동적 k 적중 47/55, Hit@1 76%, MRR 0.835 | `python rag_eval.py` | 7.4 |
 | k=1 규칙 삭제 (검색어 26개, 청크 6개) | 동적 k 적중 21/26 → 24/26 | `python rag_eval.py` | 7.4 |
 | 검색어 레이드 이름 유지 규칙 (8문항 × 3회, 3.1) | 이름 유지 9/24 → 17/24 | – | 7.4 |
