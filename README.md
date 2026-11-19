@@ -176,6 +176,8 @@ Gemini 오류는 LangChain 공통 예외(`langchain_core.exceptions`)로 구분�
 
 429는 분당 한도와 하루 한도를 나눠 안내합니다. 하루 한도에 걸리면 1~2분 뒤 다시 시도해도 한도가 초기화될 때까지 계속 실패하기 때문입니다. Gemini 429 응답에 들어 있는 한도 이름(`GenerateRequestsPerDayPerProjectPerModel-FreeTier`)에 `PerDay`가 있으면 하루 한도로 보고, 응답의 `retryDelay`(초)로 남은 시간을 알려 줍니다(2026-11-19 실제 Gemini 3.5 응답으로 확인). 이 구분은 Gemini 응답 형식에 기대므로, 다른 공급자 모델에서는 분당 한도 문구로 처리됩니다.
 
+오류로 답을 만들지 못한 턴은 대화 기록에서 뺍니다. 질문은 그래프 실행 전에 먼저 저장되므로, 그대로 두면 답 없는 질문(툴 호출·결과 포함)이 쌓여 다음 질문의 맥락에 섞이기 때문입니다(실제로 429 중에 보낸 질문 3개가 답 없이 쌓인 것을 확인). 질문 메시지에 id를 붙여 두고, 실패하면 그 질문부터 뒤의 메시지를 `RemoveMessage`로 지웁니다. 안내 문구도 대화 기록에 남기지 않아(LLM이 오류 문구를 자기 답변으로 보지 않도록), 새로고침하면 실패한 질문과 안내 문구는 화면에서 사라집니다.
+
 ```bash
 cd ai-agent
 python -m unittest test_llm_error_messages -v

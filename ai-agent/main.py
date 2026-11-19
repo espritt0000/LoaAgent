@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, RemoveMessage
 import re
+import uuid
 from langchain_core.exceptions import (
     ModelRateLimitError,
     ModelAuthenticationError,
@@ -52,20 +53,39 @@ def rate_limit_message(error) -> str:
         return f"오늘 사용할 수 있는 AI 요청을 모두 사용했습니다. 약 {hours}시간 {minutes}분 후 다시 시도해주세요."
     return "오늘 사용할 수 있는 AI 요청을 모두 사용했습니다. 한도가 초기화된 뒤 다시 시도해주세요."
 
+def discard_failed_turn(config, question_id):
+    """답을 만들지 못한 턴(질문과 그 뒤에 쌓인 툴 호출·결과)을 대화 기록에서 뺀다.
+    질문은 그래프 실행 전에 먼저 저장되므로, 그대로 두면 답 없는 질문이 다음 질문의 맥락에 섞인다"""
+    try:
+        messages = agent_app.get_state(config).values.get("messages", [])
+        ids = [m.id for m in messages]
+        if question_id not in ids:
+            return
+        failed_turn = messages[ids.index(question_id):]
+        agent_app.update_state(config, {"messages": [RemoveMessage(id=m.id) for m in failed_turn]})
+        print(f"🧹 [History Cleanup] 실패한 턴의 메시지 {len(failed_turn)}개를 대화 기록에서 제거")
+    except Exception as e:
+        print(f"⚠️ [History Cleanup] 실패한 턴 정리 실패 - {type(e).__name__}")
+
+
 @fastapi_app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(chatRequest: ChatRequest):
     print(f"SpringBoot Request : {chatRequest.message}")
 
+    thread_id = chatRequest.thread_id
+    print("thread_id : " + thread_id)
+    config ={"configurable": {"thread_id": thread_id},
+            "recursion_limit": 15
+    }
+    # 실패했을 때 이번 턴을 찾아 지울 수 있도록 질문 메시지에 id를 붙인다
+    question_id = str(uuid.uuid4())
+    failed = True
     try:
         initial_state = {
-            "messages": [HumanMessage(content=chatRequest.message)]
-        }
-        thread_id = chatRequest.thread_id
-        print("thread_id : " + thread_id)
-        config ={"configurable": {"thread_id": thread_id},
-                "recursion_limit": 15
+            "messages": [HumanMessage(content=chatRequest.message, id=question_id)]
         }
         result = agent_app.invoke(initial_state, config=config)
+        failed = False
 
         current_state = agent_app.get_state(config)
         print(f"[DEBUG] 현재 저장된 메시지 개수: {len(current_state.values.get('messages', []))}")
@@ -94,6 +114,9 @@ def chat_endpoint(chatRequest: ChatRequest):
         print(f"에이전트 실행 중 오류 발생: {type(e).__name__}: {e}")
         ai_reply = "AI 에이전트 처리 중 오류가 발생했습니다."
 
+    if failed:
+        # 안내 문구는 화면에만 보여 주고 대화 기록에는 남기지 않는다 (LLM이 오류 문구를 자기 답변으로 보지 않도록)
+        discard_failed_turn(config, question_id)
     return ChatResponse(reply=ai_reply)
 
 

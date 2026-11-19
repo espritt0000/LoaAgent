@@ -7,7 +7,9 @@ LLM 오류 종류별 안내 문구 테스트 (main.py /chat)
   사용자에게 돌아가는 문구를 확인합니다. Gemini API는 호출하지 않습니다.
 """
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
+from langchain_core.messages import AIMessage
 from langchain_core.exceptions import ModelAPIError
 from langchain_google_genai.chat_models import GoogleRateLimitError, GoogleAuthenticationError
 from langgraph.checkpoint.memory import MemorySaver
@@ -75,6 +77,53 @@ class LLMErrorMessageTest(unittest.TestCase):
         self.assertEqual(reply, "AI 에이전트 처리 중 오류가 발생했습니다.")
         self.assertEqual(calls, 2)  # 라우터는 1회 재시도
         self.assertEqual(mock_general_llm.invoke.call_count, 1)  # 폴백으로 general_agent까지 감
+
+
+
+class FailedTurnCleanupTest(unittest.TestCase):
+    """LLM 오류로 답을 못 만든 턴은 대화 기록에서 빠지는지 확인한다 (답 없는 질문이 다음 맥락에 섞이지 않게)"""
+
+    def setUp(self):
+        trimmer_patch = patch.object(agent_module, "trimmer")
+        trimmer_patch.start().invoke.side_effect = lambda messages: messages
+        self.addCleanup(trimmer_patch.stop)
+        self.graph = agent_module.workflow.compile(checkpointer=MemorySaver())
+        app_patch = patch.object(main, "agent_app", self.graph)
+        app_patch.start()
+        self.addCleanup(app_patch.stop)
+        self.general = MagicMock()
+        # 호출마다 새 메시지를 돌려준다 (같은 객체를 돌려주면 id가 같아 이전 답변을 덮어씀)
+        self.general.invoke.side_effect = lambda messages: AIMessage(content="답변")
+        general_patch = patch.object(agent_module, "llm", self.general)
+        general_patch.start()
+        self.addCleanup(general_patch.stop)
+
+    def ask(self, message, router_result=None, router_error=None):
+        router = MagicMock()
+        if router_error:
+            router.invoke.side_effect = router_error
+        else:
+            router.invoke.return_value = router_result
+        with patch.object(agent_module, "router_llm", router):
+            return chat_endpoint(ChatRequest(message=message, thread_id="t-cleanup")).reply
+
+    def stored(self):
+        return [m.content for m in self.graph.get_state({"configurable": {"thread_id": "t-cleanup"}}).values.get("messages", [])]
+
+    def test_429로_실패한_질문은_기록에서_빠진다(self):
+        to_general = SimpleNamespace(destination="general_agent")
+        self.ask("첫 질문", router_result=to_general)
+        self.ask("실패 질문", router_error=GoogleRateLimitError("429 RESOURCE_EXHAUSTED"))
+        self.assertEqual(self.stored(), ["첫 질문", "답변"])
+
+        self.ask("다음 질문", router_result=to_general)
+        self.assertEqual(self.stored(), ["첫 질문", "답변", "다음 질문", "답변"])
+
+    def test_라우터_이후_에이전트에서_실패해도_그_턴이_통째로_빠진다(self):
+        self.general.invoke.side_effect = ModelAPIError("503 UNAVAILABLE")
+        reply = self.ask("질문", router_result=SimpleNamespace(destination="general_agent"))
+        self.assertEqual(reply, "AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요.")
+        self.assertEqual(self.stored(), [])
 
 
 if __name__ == "__main__":
