@@ -14,7 +14,7 @@ from langchain_core.exceptions import (
     ModelTimeoutError,
     ModelConnectionError,
 )
-from agent.agent import app as agent_app, checkpointer  # agent.py에서 .env를 읽는다 (load_dotenv)
+from agent.agent import app as agent_app, checkpointer, content_text  # agent.py에서 .env를 읽는다 (load_dotenv)
 
 # [내부 호출 인증] Spring만 FastAPI를 부를 수 있도록 미리 정한 키를 X-API-Key 헤더로 확인한다
 FASTAPI_API_KEY = os.getenv("FASTAPI_API_KEY")
@@ -53,13 +53,6 @@ HISTORY_LIMIT = 50
 # 나중에 끝난 쪽이 앞 턴을 덮어써 대화 기록에서 사라진다 (Enter 두 번, 타임아웃 후 재전송)
 # shortcut: 이 프로세스 안에서만 막음, uvicorn worker를 여러 개 띄우거나 서버를 나누면 DB 쪽 잠금으로 바꿀 것
 thread_locks: dict[str, threading.Lock] = {}
-
-
-def to_text(content) -> str:
-    """Gemini는 답변을 [{'type': 'text', 'text': ...}] 같은 리스트로 줄 때가 있어 문자열로 합친다"""
-    if isinstance(content, list):
-        return "".join(item.get("text", "") if isinstance(item, dict) else str(item) for item in content)
-    return content
 
 
 def rate_limit_message(error) -> str:
@@ -121,7 +114,7 @@ def chat_endpoint(chatRequest: ChatRequest):
             if message:
                 final_message = message[-1]
                 # 💡 구글 Gemini 특유의 리스트 형태 응답 처리 (텍스트 덩어리 추출)
-                ai_reply = to_text(final_message.content)
+                ai_reply = content_text(final_message.content)
             else:
                 ai_reply = "답변을 생성하지 못했습니다."
 
@@ -158,7 +151,7 @@ def history_endpoint(thread_id: str):
             role = "ai"
         else:
             continue  # 툴 호출 요청과 툴 결과는 화면에 보여 주지 않는다
-        text = to_text(msg.content)
+        text = content_text(msg.content)
         if not text:
             continue
         # 두 단계로 처리한 질문은 AI 답변이 단계마다 남는다. 채팅 화면처럼 마지막(최종) 답변만 보여 준다

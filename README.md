@@ -60,7 +60,8 @@ LoaAgent/
 │  ├─ tools/                  # market.py, character.py, guide.py
 │  ├─ utils/
 │  │  ├─ DBupdate.py          # 공략 문서 증분 임베딩 (변경된 파일만 재적재)
-│  │  └─ utils.py             # Stove API 공통 헤더, 에러 핸들러
+│  │  ├─ utils.py             # Stove API 공통 헤더, 에러 핸들러
+│  │  └─ visualize_db.py      # (선택) Chroma 임베딩을 PCA 그래프로 보는 개발용 도구, 서비스에서는 사용 안 함
 │  ├─ data/raids/             # 레이드 공략 Markdown 문서 6개 (세르카, 벨가르딘, 칠흑 폭풍의 밤, 파멸의 성채, 최후의 날, 지평의 성당)
 │  ├─ router_eval.py          # 라우터 분기 테스트 (단일 턴 40 / multiturn 28 / hard 24 / holdout 10 / compound 12)
 │  ├─ compound_eval.py        # 두 영역이 섞인 질문 실제 답변 확인 (그래프 전체 실행, 6문항)
