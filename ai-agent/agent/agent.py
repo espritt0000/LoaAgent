@@ -4,6 +4,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import SystemMessage, HumanMessage, trim_messages
 from langchain_core.exceptions import ModelError
+import httpx
 from pydantic import BaseModel, Field
 import os
 import sqlite3
@@ -39,7 +40,13 @@ if not LLM_PROVIDER or not LLM_MODEL:
     # 설정이 빠졌는데 다른 모델로 조용히 실행되지 않도록 서버 시작 단계에서 바로 멈춘다
     raise RuntimeError("🚨 [LLM CONFIG] .env에 LLM_PROVIDER와 LLM_MODEL을 설정해야 합니다 (.env.example 참고)")
 print(f"🤖 [LLM CONFIG] provider={LLM_PROVIDER}, model={LLM_MODEL}")
-llm = init_chat_model(LLM_MODEL, model_provider=LLM_PROVIDER)
+# [LLM 호출 제한] Gemini 기본값은 timeout 없음·재시도 6회라 FastAPI가 Spring(응답 120초)보다 오래 붙잡힐 수 있다.
+# 호출 1번: 최대 30초 × 2번 시도(재시도 1회). 실측값 아님. 한 턴의 LLM 호출이 여러 번이라 턴 전체 시간을 보장하지는 않는다
+# timeout이 나면 ModelTimeoutError가 아니라 httpx.TimeoutException이 올라온다 (2026-11-20 langchain-google-genai 4.4.2로 확인)
+LLM_TIMEOUT = 30
+LLM_MAX_RETRIES = 2  # google_genai는 첫 요청을 포함한 총 시도 횟수로 쓴다
+LLM_CALL_ERRORS = (ModelError, httpx.TimeoutException)
+llm = init_chat_model(LLM_MODEL, model_provider=LLM_PROVIDER, timeout=LLM_TIMEOUT, max_retries=LLM_MAX_RETRIES)
 
 # 토큰 트림 설정
 trimmer = trim_messages(
@@ -142,7 +149,7 @@ def router(state: AgentState):
             if not plan:
                 raise ValueError("작업 계획이 비어 있음 (steps=[])")
             break
-        except ModelError as e:
+        except LLM_CALL_ERRORS as e:
             # LLM 호출 자체의 실패(429, 인증 오류, 서버 장애 등)는 SDK가 이미 재시도했고,
             # general_agent도 같은 LLM을 쓰므로 재시도·폴백 없이 바로 올려서 main.py에서 안내한다
             print(f"🚨 [Router LLM Error] LLM 호출 실패, 재시도·폴백 없이 중단 - {type(e).__name__}")

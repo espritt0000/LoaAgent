@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, RemoveMessage
 import re
 import threading
 import uuid
+import httpx
 from langchain_core.exceptions import (
     ModelRateLimitError,
     ModelAuthenticationError,
@@ -126,7 +127,11 @@ def chat_endpoint(chatRequest: ChatRequest):
             # 키 값이 로그에 남지 않도록 예외 이름만 출력한다
             print(f"🔑 [LLM Auth Error] API 키 또는 권한 확인 필요 - {type(e).__name__}")
             ai_reply = "AI 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요."
-        except (ModelAPIError, ModelTimeoutError, ModelConnectionError) as e:
+        except (ModelTimeoutError, httpx.TimeoutException) as e:
+            # Gemini timeout은 LangChain 공통 예외가 아니라 httpx 예외로 올라온다 (agent.py LLM_TIMEOUT 참고)
+            print(f"⏱️ [LLM Timeout] LLM 응답 시간 초과 - {type(e).__name__}")
+            ai_reply = "AI 응답이 너무 오래 걸려 중단했습니다. 잠시 후 다시 시도해주세요."
+        except (ModelAPIError, ModelConnectionError) as e:
             print(f"🌩️ [LLM Server Error] LLM 서버 장애 또는 연결 문제 - {type(e).__name__}")
             ai_reply = "AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요."
         except Exception as e:

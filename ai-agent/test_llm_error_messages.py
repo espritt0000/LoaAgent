@@ -7,6 +7,7 @@ LLM 오류 종류별 안내 문구 테스트 (main.py /chat)
   사용자에게 돌아가는 문구를 확인합니다. Gemini API는 호출하지 않습니다.
 """
 import unittest
+import httpx
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 from langchain_core.messages import AIMessage
@@ -66,6 +67,16 @@ class LLMErrorMessageTest(unittest.TestCase):
     def test_서버_오류면_일시적_불안정_안내(self):
         reply, _ = self.ask_with_router_error(ModelAPIError("503 UNAVAILABLE"), "t-503")
         self.assertEqual(reply, "AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요.")
+
+    def test_timeout이면_시간_초과_안내_라우터_재시도_없음(self):
+        # 실제 Gemini timeout은 httpx 예외로 올라온다 (ModelError가 아니라서 예전에는 라우터가 재시도·폴백했음)
+        reply, calls = self.ask_with_router_error(httpx.ReadTimeout("timed out"), "t-timeout")
+        self.assertEqual(reply, "AI 응답이 너무 오래 걸려 중단했습니다. 잠시 후 다시 시도해주세요.")
+        self.assertEqual(calls, 1)
+
+    def test_LLM에_timeout과_재시도_횟수가_지정됨(self):
+        self.assertEqual(agent_module.llm.timeout, agent_module.LLM_TIMEOUT)
+        self.assertEqual(agent_module.llm.max_retries, agent_module.LLM_MAX_RETRIES)
 
     def test_그_외_오류면_기존_문구(self):
         # 라우터가 LLM 오류가 아닌 예외를 내면 재시도 후 general_agent로 폴백한다.
