@@ -85,6 +85,58 @@ class RetrieveTest(unittest.TestCase):
         result = guide.retrieve("세르까 2관문")  # 세르까 ↔ 세르카 0.67
         self.assertIn("serka.md", result[0][2])
 
+    # --- 사용자 원래 질문과 대조 (LLM이 검색어를 만들며 이름을 바꾸거나 관문 번호를 빠뜨린 경우) ---
+    def test_검색어의_레이드가_바뀌면_질문의_레이드로_고친다(self):
+        result = guide.retrieve("카멘 패턴", "세르카 2관문 패턴 알려줘")
+        self.assertIn("serka.md", result[0][2])
+        self.assertIn("2관문: 태초의 그림자", result[0][2])  # 관문 번호도 질문에서 채움
+
+    def test_질문에_레이드_이름이_없으면_검색어_그대로(self):
+        result = guide.retrieve("세르카 2관문 패턴", "그럼 2관문은?")
+        self.assertIn("2관문: 태초의 그림자", result[0][2])
+
+    def test_검색어의_이름이_질문에도_있으면_검색어_그대로(self):
+        result = guide.retrieve("카멘 패턴", "세르카랑 카멘 비교해줘")  # 두 레이드를 따로 검색하는 중
+        self.assertEqual(result[0][2], "{'source_file': 'mordum.md'}")
+
+    def test_같은_레이드를_가리키면_검색어_그대로(self):
+        # 질문은 3관문 보스 이름으로 레이드를 불렀고, LLM이 레이드 제목으로 바로잡은 경우 → 불일치 안내가 아니라 1관문 검색
+        result = guide.retrieve("칠흑 1관문", "모르둠 1관문 알려줘")
+        self.assertIn("1관문: 카멘", result[0][2])
+
+    def test_질문이_다른_레이드면_관문_번호를_채우지_않는다(self):
+        result = guide.retrieve("칠흑 개요", "세르카 2관문이랑 칠흑 개요 알려줘")
+        self.assertEqual(result[0][2], "{'source_file': 'mordum.md'}")
+
+    def test_검색어에_레이드가_없어도_질문에서_찾는다(self):
+        result = guide.retrieve("2관문 패턴", "칠흑 2관문 패턴")
+        self.assertIn("2관문: 나이트레아", result[0][2])
+
+
+class ToolNodeStateTest(unittest.TestCase):
+    """실제 LangGraph ToolNode가 search_game_guide에 그래프 상태를 넣어 주는지 확인"""
+
+    def test_LLM에게는_state_인자가_보이지_않는다(self):
+        self.assertEqual(list(guide.search_game_guide.tool_call_schema.model_json_schema()["properties"]), ["query"])
+
+    def test_ToolNode가_사용자_질문을_툴에_넘긴다(self):
+        from langchain_core.messages import HumanMessage, AIMessage
+        from langgraph.graph import StateGraph, MessagesState, START, END
+        from langgraph.prebuilt import ToolNode
+        # ToolNode는 그래프 안에서만 실행되므로 agent.py처럼 그래프 노드로 넣는다
+        graph = StateGraph(MessagesState)
+        graph.add_node("guide_tools", ToolNode([guide.search_game_guide]))
+        graph.add_edge(START, "guide_tools")
+        graph.add_edge("guide_tools", END)
+        state = {"messages": [
+            HumanMessage(content="세르카 2관문 패턴 알려줘"),
+            AIMessage(content="", tool_calls=[{"name": "search_game_guide", "args": {"query": "카멘 패턴"}, "id": "c1"}]),
+        ]}
+        with patch.object(guide, "vector_store", MagicMock()), \
+             patch.object(guide, "retrieve", return_value="안내") as retrieve:
+            graph.compile().invoke(state)
+        retrieve.assert_called_once_with("카멘 패턴", "세르카 2관문 패턴 알려줘")
+
 
 if __name__ == "__main__":
     unittest.main()
