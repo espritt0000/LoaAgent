@@ -166,7 +166,7 @@ cd backend/loaagent
 | `test_api_key` | 키 없음·틀린 키 401, 맞는 키 통과 |
 | `test_gate_filter` | 관문 번호 표현(2관문·이관문·두 번째 관문), 관문 청크 + 개요, 없는 관문·보스와 관문 불일치 안내, 레이드 제목 우선 |
 | `test_character_name` | 조사가 붙은 캐릭터명은 조사를 떼고 다시 조회, "하늘로"처럼 조사로 끝나는 진짜 닉네임은 그대로, 둘 다 없으면 시도한 이름 안내, Stove 호출에 timeout 지정 |
-| `ChatApiControllerTimeoutTest` | 정상 200, 응답 지연 504, 서버 꺼짐 503, 500 응답 502 |
+| `ChatApiControllerTimeoutTest` | 정상 200, 응답 지연 504, 서버 꺼짐 503, 500 응답 502, 빈 질문·2000자 초과는 FastAPI 호출 없이 400 |
 | `ChatHistoryApiTest` | 브라우저가 보낸 `thread_id` 대신 로그인 계정 값 사용, 조회·삭제 실패 시 502 |
 | `CsrfProtectionTest` | 토큰 없는 요청 403, `<meta>` 토큰 헤더로 통과 |
 | `MemberSignupValidationTest` | 빈 값·형식·길이 위반, 한글 비밀번호 거부 |

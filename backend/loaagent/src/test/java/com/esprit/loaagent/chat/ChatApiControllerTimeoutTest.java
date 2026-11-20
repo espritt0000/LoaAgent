@@ -106,4 +106,21 @@ class ChatApiControllerTimeoutTest {
         assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
         assertEquals("AI 서버에서 오류가 발생했습니다. 잠시 후 다시 시도해주세요.", response.getBody().reply());
     }
+
+    @Test
+    void 빈_질문이나_상한을_넘는_질문은_FastAPI를_부르지_않고_400() throws Exception {
+        // 가짜 FastAPI가 불리면 200이 나오므로, 400이면 호출 전에 막힌 것
+        String baseUrl = startFakeFastapi(0, 200, "{\"reply\":\"불리면 안 됨\"}");
+        ChatApiController controller = new ChatApiController(
+                WebClientConfig.createFastapiWebClient(baseUrl, "test-api-key", CONNECT_TIMEOUT_MS, RESPONSE_TIMEOUT_SECONDS));
+        String tooLong = "가".repeat(ChatApiController.MAX_MESSAGE_LENGTH + 1);
+
+        for (String message : new String[]{null, "   ", tooLong}) {
+            ResponseEntity<ChatResponseDto> response = controller.chatResponseDto(new ChatRequestDto(null, message), () -> "tester");
+            assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+            assertEquals("질문은 1~2000자로 입력해주세요.", response.getBody().reply());
+        }
+        String maxLength = "가".repeat(ChatApiController.MAX_MESSAGE_LENGTH);
+        assertEquals(HttpStatus.OK, controller.chatResponseDto(new ChatRequestDto(null, maxLength), () -> "tester").getStatusCode());
+    }
 }
