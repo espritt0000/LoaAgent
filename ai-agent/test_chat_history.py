@@ -8,6 +8,8 @@
 """
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,6 +80,26 @@ class ChatHistoryPersistenceTest(unittest.TestCase):
         graph.invoke({"messages": [HumanMessage(content="새 질문")]}, config=mine)
         self.assertEqual([m.content for m in graph.get_state(mine).values["messages"]], ["새 질문", "안녕하세요!"])
         conn.close()
+
+    def test_같은_계정의_동시_질문도_두_턴_모두_남는다(self):
+        # 답변을 늦게 줘서 두 요청이 겹치게 만든다 (lock이 없으면 나중에 끝난 쪽이 앞 턴을 덮어써 2개만 남음)
+        def slow_answer(messages):
+            time.sleep(0.5)
+            return AIMessage(content="답변:" + messages[-1].content)
+        slow = MagicMock()
+        slow.invoke.side_effect = slow_answer
+        graph, conn = compile_graph(self.db_path)
+        with patch.object(agent_module, "llm", slow), patch.object(main, "agent_app", graph):
+            threads = [threading.Thread(target=main.chat_endpoint, args=(main.ChatRequest(message=q, thread_id="user:a"),))
+                       for q in ("질문A", "질문B")]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        stored = [m.content for m in graph.get_state({"configurable": {"thread_id": "user:a"}}).values["messages"]]
+        conn.close()
+        self.assertEqual(len(stored), 4)
+        self.assertCountEqual(stored, ["질문A", "답변:질문A", "질문B", "답변:질문B"])
 
 
 class HistoryEndpointTest(unittest.TestCase):
