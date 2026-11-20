@@ -7,11 +7,16 @@
     <!-- CSRF 토큰: POST·DELETE fetch 요청 헤더에 붙인다 -->
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- marked.js CDN 추가 -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- CDN 스크립트는 버전을 고정한다 (최신 버전이 바뀌면 화면 동작이 바뀌거나, 바뀐 파일이 로그인 화면에서 그대로 실행되지 않도록) -->
+    <!-- 버전을 올리면 integrity 해시도 새 파일로 다시 계산할 것 (해시가 다르면 브라우저가 스크립트를 막아 AI 답변이 표시되지 않음) -->
+    <!-- tailwind CDN은 CORS 헤더가 없어 integrity를 붙이면 로드가 막히므로 버전만 고정 -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <!-- marked.js: AI 답변 Markdown → HTML -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"
+            integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
     <!-- AI 답변 HTML 정화(XSS 방지) -->
-    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.18/dist/purify.min.js"
+            integrity="sha384-lkArbWjiZKuE+bzKbj1vOEF7DKYBDNvgwZMCt5OH8bdRB92zpzyNska9Q/XKPHQD" crossorigin="anonymous"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col">
 

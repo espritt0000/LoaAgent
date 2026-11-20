@@ -39,7 +39,7 @@ LangGraph 기반 멀티 에이전트로 **경매장 시세 조회 · 캐릭터 �
 | RAG | `##` 단위 청킹 + 증분 동기화, 동적 k(기본 2, 전체·요약 3), 문서에 없는 레이드·보스는 검색하지 않고 '문서 없음', 관문 번호가 있으면 그 관문 청크 + 개요만 검색(없는 관문은 안내) | 5.5 |
 | 컨텍스트 관리 | 모든 노드에서 `trim_messages`(12,000토큰), `recursion_limit=15` | 4.2 |
 | 서비스 간 호출 | Spring → FastAPI 연결 3초·응답 120초 제한, 원인별 504/503/502 안내 | 4.1 |
-| 보안 | Spring CSRF 보호, FastAPI 모든 요청에 `X-API-Key` 검증 | 4.1 |
+| 보안 | Spring CSRF 보호, FastAPI 모든 요청에 `X-API-Key` 검증, 화면 CDN 스크립트 버전 고정(marked·DOMPurify는 무결성 확인 `integrity`) | 4.1 |
 | 회원가입 검증 | Bean Validation, 한글 비밀번호 차단(BCrypt 72바이트 제한) | 4.1 |
 
 ## 기술 스택
