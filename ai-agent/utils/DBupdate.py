@@ -51,13 +51,11 @@ def build_vector_db_incremental():
     tracked_files = set(sync_state.keys())
 
     # 1. raids 폴더에서 아예 삭제된 파일은 DB에서도 청크 제거
+    # 삭제가 실패하면 예외로 멈춘다 (숨기면 청크는 남는데 상태 파일에서는 지워져 다시 시도되지 않음). 지울 청크가 없을 때는 Chroma가 오류를 내지 않는다
     deleted_files = tracked_files - current_files
     for file_name in deleted_files:
-        try:
-            vector_store.delete(where={"source_file": file_name})
-            print(f"🗑️ [삭제 반영] '{file_name}' 관련 벡터 데이터가 DB에서 제거되었습니다.")
-        except Exception:
-            pass
+        vector_store.delete(where={"source_file": file_name})
+        print(f"🗑️ [삭제 반영] '{file_name}' 관련 벡터 데이터가 DB에서 제거되었습니다.")
         if file_name in sync_state:
             del sync_state[file_name]
 
@@ -89,11 +87,8 @@ def build_vector_db_incremental():
         splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
         raw_chunks = splitter.split_text(markdown_text)
 
-        # 기존 청크 삭제 후 새로 추가 (Upsert)
-        try:
-            vector_store.delete(where={"source_file": file_name})
-        except Exception:
-            pass
+        # 기존 청크 삭제 후 새로 추가 (Upsert). 실패하면 멈춘다: 섹션 수가 줄었을 때 옛 청크가 남은 채 '동기화 완료'로 기록되지 않도록
+        vector_store.delete(where={"source_file": file_name})
 
         docs = []
         ids = []

@@ -71,7 +71,8 @@ LoaAgent/
 │  ├─ test_chat_history.py    # 대화 기록 영구 저장·/history 테스트 (Mock + 임시 SQLite)
 │  ├─ test_api_key.py         # FastAPI 내부 호출용 API Key 테스트 (TestClient)
 │  ├─ test_character_name.py  # 캐릭터명 조사 처리 테스트 (Mock, API 호출 없음)
-│  └─ test_gate_filter.py     # 공략 검색 관문 필터 테스트 (Mock, 임베딩 호출 없음)
+│  ├─ test_gate_filter.py     # 공략 검색 관문 필터 테스트 (Mock, 임베딩 호출 없음)
+│  └─ test_dbupdate.py        # 공략 문서 증분 동기화 테스트 (Mock, 벡터 DB 미사용)
 └─ backend/loaagent/          # Spring Boot (인증·세션·화면)
 ```
 
@@ -149,7 +150,7 @@ FastAPI 호출 제한 시간은 `application.properties`의 `fastapi.*`(연결 3
 
 ```bash
 cd ai-agent
-python -m unittest test_router_fallback test_planner test_llm_error_messages test_chat_history test_api_key test_character_name test_gate_filter -v
+python -m unittest test_router_fallback test_planner test_llm_error_messages test_chat_history test_api_key test_character_name test_gate_filter test_dbupdate -v
 ```
 
 ```bash
@@ -165,6 +166,7 @@ cd backend/loaagent
 | `test_chat_history` | 재연결 후 대화 유지, 계정별 저장, `/history` 최근 50개, 새 대화(삭제), 같은 계정 동시 질문 시 두 턴 모두 저장 |
 | `test_api_key` | 키 없음·틀린 키 401, 맞는 키 통과 |
 | `test_gate_filter` | 관문 번호 표현(2관문·이관문·두 번째 관문), 관문 청크 + 개요, 없는 관문·보스와 관문 불일치 안내, 레이드 제목 우선 |
+| `test_dbupdate` | 바뀐 문서는 기존 청크를 지우고 다시 적재, 청크 삭제가 실패하면 멈추고 '동기화 완료'로 기록하지 않음 |
 | `test_character_name` | 조사가 붙은 캐릭터명은 조사를 떼고 다시 조회, "하늘로"처럼 조사로 끝나는 진짜 닉네임은 그대로, 둘 다 없으면 시도한 이름 안내, Stove 호출에 timeout 지정 |
 | `ChatApiControllerTimeoutTest` | 정상 200, 응답 지연 504, 서버 꺼짐 503, 500 응답 502, 빈 질문·2000자 초과는 FastAPI 호출 없이 400 |
 | `ChatHistoryApiTest` | 브라우저가 보낸 `thread_id` 대신 로그인 계정 값 사용, 조회·삭제 실패 시 502 |
