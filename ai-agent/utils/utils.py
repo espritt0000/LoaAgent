@@ -5,15 +5,15 @@ load_dotenv()
 
 API_KEY = os.getenv("LOSTARK_API_KEY")
 
+# Stove API 응답을 기다리는 최대 시간(초). 없으면 requests가 끝없이 기다려 FastAPI 작업 스레드가 묶인다
+API_TIMEOUT = 10
+
 # 공통 헤더를 생성해주는 함수 또는 상수 정의
-def api_get_headers(include_content_type: bool = False) -> dict:
-    headers = {
+def api_get_headers() -> dict:
+    return {
         "Accept": "application/json",
         "Authorization": f"bearer {API_KEY}"
     }
-    if include_content_type:
-        headers["Content-Type"] = "application/json"
-    return headers
 
 # api 상태코드 4xx, 5xx 에러 출력
 def handle_api_error(status_code: int, target_name: str = None) -> dict:

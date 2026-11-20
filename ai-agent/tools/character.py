@@ -1,6 +1,6 @@
 import requests
 from langchain_core.tools import tool
-from utils.utils import handle_api_error, api_get_headers
+from utils.utils import handle_api_error, api_get_headers, API_TIMEOUT
 
 # 캐릭터명 뒤에 붙어 들어올 수 있는 조사 (예: "니나브았아로 칠흑 갈 수 있어?")
 # 긴 것부터 확인해야 "으로"를 "로"로 잘못 떼지 않는다
@@ -18,7 +18,7 @@ def strip_particle(name: str):
 def request_profile(character_name: str):
     """Stove API로 프로필을 조회해 JSON을 돌려준다. 없는 캐릭터면 Stove가 200 + null을 주므로 None"""
     url = f"https://developer-lostark.game.onstove.com/armories/characters/{character_name}/profiles"
-    response = requests.get(url, headers=api_get_headers())
+    response = requests.get(url, headers=api_get_headers(), timeout=API_TIMEOUT)
     # 4xx, 5xx 에러인 경우 HTTPError 예외 발생
     response.raise_for_status()
     return response.json()

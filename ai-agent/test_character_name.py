@@ -20,7 +20,8 @@ def fake_stove(existing):
     """existing에 있는 이름만 프로필을 돌려주는 가짜 Stove API. 호출된 이름을 기록한다"""
     called = []
 
-    def get(url, headers=None):
+    def get(url, headers=None, timeout=None):
+        assert timeout, "Stove 호출에 timeout이 없으면 응답이 없을 때 끝없이 기다린다"
         name = url.split("/characters/")[1].split("/profiles")[0]
         called.append(name)
         response = MagicMock()

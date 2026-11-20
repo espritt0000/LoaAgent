@@ -1,7 +1,6 @@
 import requests
 from langchain_core.tools import tool
-from dotenv import load_dotenv
-from utils.utils import handle_api_error, api_get_headers
+from utils.utils import handle_api_error, api_get_headers, API_TIMEOUT
 
 @tool
 def get_market_options() -> dict:
@@ -12,7 +11,7 @@ def get_market_options() -> dict:
     url = "https://developer-lostark.game.onstove.com/markets/options"
     
     try:
-        response = requests.get(url, headers=api_get_headers())
+        response = requests.get(url, headers=api_get_headers(), timeout=API_TIMEOUT)
         
         # 4xx, 5xx 에러 발생 시 예외(HTTPError) 발생
         response.raise_for_status()
@@ -65,8 +64,7 @@ def search_market_items(item_name: str, category_code: int) -> list:
     print("-" * 50)
     print(f"search_market_items Payload: {payload}")
     try:
-        response = requests.post(url, headers=api_get_headers(), json=payload)
-        print("response : ", response.json())
+        response = requests.post(url, headers=api_get_headers(), json=payload, timeout=API_TIMEOUT)
         print("-" * 50)
         # 4xx, 5xx 에러 발생 시 예외(HTTPError) 발생
         response.raise_for_status()
