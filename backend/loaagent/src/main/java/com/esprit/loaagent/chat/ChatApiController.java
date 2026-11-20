@@ -33,9 +33,17 @@ public class ChatApiController {
         return "user:" + principal.getName();
     }
 
+    // 질문 길이 상한 (chat.html 입력창 maxlength와 같은 값). 긴 입력 하나가 라우터·에이전트마다 Gemini에 들어가 하루 한도를 다 쓰지 않도록
+    static final int MAX_MESSAGE_LENGTH = 2000;
+
     @PostMapping("/chat/ask")
     public ResponseEntity<ChatResponseDto> chatResponseDto(@RequestBody ChatRequestDto chatRequestDto, Principal principal){
         System.out.println("post /chat/ask");
+        String message = chatRequestDto.message();
+        if (message == null || message.isBlank() || message.length() > MAX_MESSAGE_LENGTH) {
+            System.out.println("✋ [Message Rejected] 빈 질문 또는 " + MAX_MESSAGE_LENGTH + "자 초과");
+            return errorResponse(HttpStatus.BAD_REQUEST, "질문은 1~" + MAX_MESSAGE_LENGTH + "자로 입력해주세요.");
+        }
         ChatRequestDto fastapiRequest = new ChatRequestDto(threadIdOf(principal), chatRequestDto.message());
         try {
             ChatResponseDto chatResponseDto = fastapiWebClient.post()
