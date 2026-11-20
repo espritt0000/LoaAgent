@@ -2,8 +2,11 @@ import os
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Annotated
 from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 
@@ -118,16 +121,59 @@ def find_raid(query: str):
     return source, boss_places, name
 
 
-def retrieve(query: str):
+def latest_question(state) -> str:
+    """대화 기록에서 사용자가 이번 턴에 입력한 질문을 꺼낸다
+    (2단계 계획의 단계 지시는 state에 저장되지 않는 임시 메시지라 여기 나오지 않음)"""
+    for msg in reversed(state.get("messages", [])):
+        if isinstance(msg, HumanMessage):
+            return msg.content if isinstance(msg.content, str) else ""
+    return ""
+
+
+def pick_raid(query: str, question: str):
+    """LLM이 만든 검색어의 레이드와 사용자 원래 질문의 레이드 중 무엇을 쓸지 정한다
+    - 질문에 레이드 이름이 없음(예: "그럼 2관문은?") → 검색어 그대로
+    - 검색어의 이름이 질문에도 있음(예: 두 레이드를 비교하는 질문) → 검색어 그대로
+    - 같은 레이드를 가리킴(예: 질문 "모르둠 1관문", 검색어 "칠흑 1관문") → 검색어 그대로
+    - 그 밖에는 LLM이 이름을 바꾸거나 빠뜨린 것으로 보고 질문의 레이드를 쓴다
+    (그래서 사용자가 말하지 않은 다른 레이드는 LLM이 스스로 검색할 수 없다)"""
+    found = find_raid(query)
+    from_user = find_raid(question) if question else None
+    if from_user is None:
+        return found
+    if found and (found[0] == from_user[0] or name_score(question, found[2]) >= NAME_SIMILARITY):
+        return found
+    if found:
+        print(f"🛡️ [Raid Fixed] 검색어의 '{found[2]}' → 사용자 질문의 '{from_user[2]}'")
+    return from_user
+
+
+def pick_gate(query: str, question: str, source: str):
+    """검색어에 관문 번호가 없으면 사용자 질문에서 채운다
+    단, 질문이 다른 레이드를 가리키면 채우지 않는다 (예: "세르카 2관문이랑 칠흑 개요"에서 칠흑 검색에 2관문을 붙이지 않기 위해)"""
+    gate = find_gate(query)
+    if gate is not None or not question:
+        return gate
+    from_user = find_raid(question)
+    if from_user is None or from_user[0] == source:
+        gate = find_gate(question)
+        if gate is not None:
+            print(f"🛡️ [Gate Filled] 검색어에 관문 번호가 없어 사용자 질문의 {gate}관문 사용")
+    return gate
+
+
+def retrieve(query: str, question: str = ""):
     """검색어로 공략 청크를 찾는다 (search_game_guide와 rag_eval.py가 같이 사용)
     성공하면 Document 목록, 검색하지 않고 안내해야 하면 안내 문자열을 돌려준다
+    - question: 사용자가 이번 턴에 입력한 질문. 있으면 레이드·관문 번호를 검색어와 대조한다
+      (LLM이 검색어를 만들며 레이드 이름을 바꾸거나 관문 번호를 빠뜨리는 경우를 막기 위해, rag_eval.py는 넘기지 않음)
     - 레이드·보스 이름이 없음 → 문서 없음 안내
     - 관문 번호 없음 → 그 레이드 문서 안에서만 유사도 검색
     - 관문 번호 있음 → 그 관문 청크를 유사도와 상관없이 넣고, 같은 레이드 개요를 보조로 붙임
       (임베딩은 "1관문"과 "2관문"을 거의 구분하지 못해, 순위에 맡기면 다른 관문이 1위가 됨)
     - 없는 관문, 보스와 관문 불일치 → 비슷한 문서를 주지 않고 안내
     """
-    found = find_raid(query)
+    found = pick_raid(query, question)
     if found is None:
         print("🚫 [No Matching Raid] 검색어에서 문서에 있는 레이드·보스 이름을 찾지 못함")
         titles = " / ".join(sorted(raid["title"] for raid in RAIDS.values()))
@@ -138,7 +184,7 @@ def retrieve(query: str):
 
     source, boss_places, name = found
     raid = RAIDS[source]
-    gate = find_gate(query)
+    gate = pick_gate(query, question, source)
 
     if gate is None:
         k = decide_k(query)
@@ -176,7 +222,7 @@ def decide_k(query: str) -> int:
 
 
 @tool
-def search_game_guide(query: str) -> list:
+def search_game_guide(query: str, state: Annotated[dict, InjectedState]) -> list:
     """
     로스트아크 레이드 관문 정보, 군단장 패턴, 보스 공략, 게임 가이드 문서에서 필요한 정보를 검색합니다.
     정보가 부족하거나 추가 확인이 필요한 패턴이 있다면 키워드를 바꾸어 다시 호출할 수 있습니다.
@@ -185,6 +231,7 @@ def search_game_guide(query: str) -> list:
         query (str): 
             검색할 공략 키워드 또는 질문 내용. 
             [주의] 사용자가 질문한 핵심 패턴이나 보스 이름, 공략 명칭을 포함하여 구체적으로 작성할 것.
+        state: 그래프 상태. LangGraph(ToolNode)가 넣어 주며 LLM에게는 보이지 않는다 (사용자 원래 질문을 꺼내는 데 사용)
     """
     print("-" * 50)
     print(f"🔍 [Tool Call] search_game_guide 검색어: '{query}'")
@@ -194,7 +241,7 @@ def search_game_guide(query: str) -> list:
     
     try:
         # 이름 확인, 레이드·관문 필터, 동적 k는 retrieve()에서 처리
-        retrieved_docs = retrieve(query)
+        retrieved_docs = retrieve(query, latest_question(state))
         if isinstance(retrieved_docs, str):  # 문서 없음·없는 관문·보스와 관문 불일치 안내
             print("-" * 50)
             return [{"error": retrieved_docs}]
