@@ -171,7 +171,7 @@ cd backend/loaagent
 | `ChatApiControllerTimeoutTest` | 정상 200, 응답 지연 504, 서버 꺼짐 503, 500 응답 502, 빈 질문·2000자 초과는 FastAPI 호출 없이 400 |
 | `ChatHistoryApiTest` | 브라우저가 보낸 `thread_id` 대신 로그인 계정 값 사용, 조회·삭제 실패 시 502 |
 | `CsrfProtectionTest` | 토큰 없는 요청 403, `<meta>` 토큰 헤더로 통과 |
-| `MemberSignupValidationTest` | 빈 값·형식·길이 위반, 한글 비밀번호 거부 |
+| `MemberSignupValidationTest` | 빈 값·형식·길이 위반, 한글 비밀번호 거부, 동시 가입으로 DB 중복 제약에 걸려도 500이 아니라 중복 안내 |
 
 ## 한계와 개선 계획
 
