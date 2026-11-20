@@ -2,6 +2,7 @@ package com.esprit.loaagent.member;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -39,7 +40,8 @@ public class MemberController {
         }
         try {
             memberService.join(memberFormDto);
-        } catch (IllegalStateException e){
+        } catch (IllegalStateException | DataIntegrityViolationException e){
+            // DataIntegrityViolationException: 가입 버튼을 두 번 눌러 두 요청이 중복 확인을 함께 통과하면, 두 번째 저장이 DB unique 제약에 걸린다 (500 대신 중복 안내)
             return "redirect:/signup?error=duplicate";
         }
         return "redirect:/";

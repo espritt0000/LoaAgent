@@ -5,8 +5,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import org.springframework.dao.DataIntegrityViolationException;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -39,6 +42,18 @@ class MemberSignupValidationTest {
                 .andExpect(redirectedUrl("/"));
 
         verify(memberService).join(any(MemberFormDto.class));
+    }
+
+    @Test
+    void 동시_가입으로_DB_unique_제약에_걸리면_500이_아니라_중복_안내() throws Exception {
+        // 두 요청이 중복 확인을 함께 통과한 뒤 두 번째 저장이 unique 제약에 걸리는 상황
+        when(memberService.join(any(MemberFormDto.class))).thenThrow(new DataIntegrityViolationException("Duplicate entry"));
+
+        mockMvc.perform(post("/signup")
+                        .param("username", "loauser01")
+                        .param("password", "password123")
+                        .param("email", "user@example.com"))
+                .andExpect(redirectedUrl("/signup?error=duplicate"));
     }
 
     @Test
