@@ -17,7 +17,7 @@ public class WebClientConfig {
             // FastAPI 내부 호출용 API Key (application-secret.properties, 값이 없으면 서버 시작 단계에서 실패)
             @Value("${fastapi.api-key}") String apiKey,
             @Value("${fastapi.connect-timeout-ms:3000}") int connectTimeoutMs,
-            @Value("${fastapi.response-timeout-seconds:120}") long responseTimeoutSeconds) {
+            @Value("${fastapi.response-timeout-seconds:300}") long responseTimeoutSeconds) {
         return createFastapiWebClient("http://localhost:8000", apiKey, connectTimeoutMs, responseTimeoutSeconds);
     }
 
