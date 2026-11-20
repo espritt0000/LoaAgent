@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
-from agent.agent import workflow
+from agent.agent import workflow, content_text
 
 CHARACTER = "니나브았아"  # 실제 캐릭터 (Stove API로 조회됨)
 
@@ -36,12 +36,6 @@ CASES = [
 ]
 
 app = workflow.compile(checkpointer=MemorySaver())
-
-
-def to_text(content) -> str:
-    if isinstance(content, list):
-        return "".join(item.get("text", "") if isinstance(item, dict) else str(item) for item in content)
-    return content or ""
 
 
 def digits(text) -> str:
@@ -89,13 +83,13 @@ def run_case(question):
             tool_calls.append(call["name"])
         if isinstance(msg, ToolMessage) and msg.name == "get_character_profile":
             try:
-                tool_results["get_character_profile"] = ast.literal_eval(to_text(msg.content))
+                tool_results["get_character_profile"] = ast.literal_eval(content_text(msg.content))
             except (ValueError, SyntaxError):
-                tool_results["get_character_profile"] = json.loads(to_text(msg.content))
+                tool_results["get_character_profile"] = json.loads(content_text(msg.content))
     # 라우터 경로: 작업 계획이 있으면 단계 순서대로, 없으면(Planner 이전 구조) 고른 에이전트 하나
     plan = result.get("plan") or []
     route = " → ".join(step["agent"] for step in plan) if plan else result.get("next_node")
-    return route, tool_calls, tool_results, to_text(messages[-1].content)
+    return route, tool_calls, tool_results, content_text(messages[-1].content)
 
 
 def main():
