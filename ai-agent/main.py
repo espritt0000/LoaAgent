@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends, Header, HTTPException
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, RemoveMessage
 import re
+import threading
 import uuid
 from langchain_core.exceptions import (
     ModelRateLimitError,
@@ -47,6 +48,11 @@ class HistoryResponse(BaseModel):
 
 # 화면에 다시 보여 줄 최근 메시지 수 (저장소에는 전체가 남아 있음)
 HISTORY_LIMIT = 50
+
+# 같은 대화(thread_id)의 질문은 한 번에 하나씩 처리한다. 동시에 실행되면 둘 다 같은 이전 상태에서 시작해
+# 나중에 끝난 쪽이 앞 턴을 덮어써 대화 기록에서 사라진다 (Enter 두 번, 타임아웃 후 재전송)
+# shortcut: 이 프로세스 안에서만 막음, uvicorn worker를 여러 개 띄우거나 서버를 나누면 DB 쪽 잠금으로 바꿀 것
+thread_locks: dict[str, threading.Lock] = {}
 
 
 def to_text(content) -> str:
@@ -98,43 +104,45 @@ def chat_endpoint(chatRequest: ChatRequest):
     # 실패했을 때 이번 턴을 찾아 지울 수 있도록 질문 메시지에 id를 붙인다
     question_id = str(uuid.uuid4())
     failed = True
-    try:
-        initial_state = {
-            "messages": [HumanMessage(content=chatRequest.message, id=question_id)]
-        }
-        result = agent_app.invoke(initial_state, config=config)
-        failed = False
+    # 실패한 턴 정리까지 끝난 뒤에 다음 질문이 이전 상태를 읽도록 lock 안에서 처리한다 (dict.setdefault는 스레드 간에 한 번만 만들어짐)
+    with thread_locks.setdefault(thread_id, threading.Lock()):
+        try:
+            initial_state = {
+                "messages": [HumanMessage(content=chatRequest.message, id=question_id)]
+            }
+            result = agent_app.invoke(initial_state, config=config)
+            failed = False
 
-        current_state = agent_app.get_state(config)
-        print(f"[DEBUG] 현재 저장된 메시지 개수: {len(current_state.values.get('messages', []))}")
+            current_state = agent_app.get_state(config)
+            print(f"[DEBUG] 현재 저장된 메시지 개수: {len(current_state.values.get('messages', []))}")
 
-        
-        message = result.get("messages",[])
-        if message:
-            final_message = message[-1]
-            # 💡 구글 Gemini 특유의 리스트 형태 응답 처리 (텍스트 덩어리 추출)
-            ai_reply = to_text(final_message.content)
-        else:
-            ai_reply = "답변을 생성하지 못했습니다."
 
-    # LLM 오류는 LangChain 공통 예외(langchain_core.exceptions)로 구분한다 (모델을 바꿔도 그대로 사용 가능)
-    except ModelRateLimitError as e:
-        ai_reply = rate_limit_message(e)
-        print(f"🚦 [LLM Rate Limit] 사용량 제한(429, {'하루' if 'PerDay' in str(e) else '분당 등'} 한도) - {type(e).__name__}")
-    except (ModelAuthenticationError, ModelPermissionDeniedError) as e:
-        # 키 값이 로그에 남지 않도록 예외 이름만 출력한다
-        print(f"🔑 [LLM Auth Error] API 키 또는 권한 확인 필요 - {type(e).__name__}")
-        ai_reply = "AI 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요."
-    except (ModelAPIError, ModelTimeoutError, ModelConnectionError) as e:
-        print(f"🌩️ [LLM Server Error] LLM 서버 장애 또는 연결 문제 - {type(e).__name__}")
-        ai_reply = "AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요."
-    except Exception as e:
-        print(f"에이전트 실행 중 오류 발생: {type(e).__name__}: {e}")
-        ai_reply = "AI 에이전트 처리 중 오류가 발생했습니다."
+            message = result.get("messages",[])
+            if message:
+                final_message = message[-1]
+                # 💡 구글 Gemini 특유의 리스트 형태 응답 처리 (텍스트 덩어리 추출)
+                ai_reply = to_text(final_message.content)
+            else:
+                ai_reply = "답변을 생성하지 못했습니다."
 
-    if failed:
-        # 안내 문구는 화면에만 보여 주고 대화 기록에는 남기지 않는다 (LLM이 오류 문구를 자기 답변으로 보지 않도록)
-        discard_failed_turn(config, question_id)
+        # LLM 오류는 LangChain 공통 예외(langchain_core.exceptions)로 구분한다 (모델을 바꿔도 그대로 사용 가능)
+        except ModelRateLimitError as e:
+            ai_reply = rate_limit_message(e)
+            print(f"🚦 [LLM Rate Limit] 사용량 제한(429, {'하루' if 'PerDay' in str(e) else '분당 등'} 한도) - {type(e).__name__}")
+        except (ModelAuthenticationError, ModelPermissionDeniedError) as e:
+            # 키 값이 로그에 남지 않도록 예외 이름만 출력한다
+            print(f"🔑 [LLM Auth Error] API 키 또는 권한 확인 필요 - {type(e).__name__}")
+            ai_reply = "AI 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요."
+        except (ModelAPIError, ModelTimeoutError, ModelConnectionError) as e:
+            print(f"🌩️ [LLM Server Error] LLM 서버 장애 또는 연결 문제 - {type(e).__name__}")
+            ai_reply = "AI 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해주세요."
+        except Exception as e:
+            print(f"에이전트 실행 중 오류 발생: {type(e).__name__}: {e}")
+            ai_reply = "AI 에이전트 처리 중 오류가 발생했습니다."
+
+        if failed:
+            # 안내 문구는 화면에만 보여 주고 대화 기록에는 남기지 않는다 (LLM이 오류 문구를 자기 답변으로 보지 않도록)
+            discard_failed_turn(config, question_id)
     return ChatResponse(reply=ai_reply)
 
 
